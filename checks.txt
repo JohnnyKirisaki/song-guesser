@@ -1,0 +1,56 @@
+When joining the website for the 1st time be it to the main screen or to a room the user will be prompted to insert its username and choose a profile picture (uploaded from pc or from image link). this combo of username and profile picture will be saved in the database for when a user rejoins with the same username the settings are all there.
+
+In this game the menu will have 2 buttons, one that can Create a Room and another to Join a Room. At the top right there will be a messa saying welcome (username) with the profile picture by its side, clicking the name or the picture allows the user to edit its data.
+
+To join a room you need a code to enter that room.
+
+At the top left of the main menu a user can see how many wins they got.
+
+After a user creates a room it will show the code of the room and a link that will ensure that an external user joins that room, the user can edit the room settings and start the game.
+
+The game consists on a each user being able to paste a link of a spotify playlist/artist/album and thats the data for that user to use in the game. The algorithm can not choose duplicate songs so make each selection unique. We should check both song name and artist name to ensure that they're not the same not only use the track id.
+
+
+If the room settings choose to play 20 songs and there are 4 players the game will choose 5 songs from each player from each link they uploaded (keep the same ratio dependent on the number of rounds, if its a non dividble number pick players at random to fill those spots). Depending on the time constraints chose on the settings for each of the 20 songs the song will play for X time and the user has to guess the song name and/or artits.
+there should be two fields one for song name and another for artist name. Getting the song name will award more points than knowing the artist name.
+
+In the settings of the room a user can specify number of songs to be played. The time each song will play (max 20 seconds). And the scoring system if its normal, like song name gets 5 points and artist name 2 points, or rapid that awards more points to the user which was faster or even Artist-only / Song-only modes. Lyrics-only modes (first few line shown, guess song)
+
+The UI of the app should look modern and slick like these websites (Netflix, Steam, Spotify, Pinterest, etc). Nothing should be out of place, make use of soundeffects, effects, patterns, whatever. Nothing should be out of place
+
+The screen when a game is playing should be the following:
+- a default vynil record spining
+- a progress bar with the X time the user has to guess the song
+- two fields one for song name another for artist name (a user can be awarded for guessing both fields or only one field if they guess correctly only one)
+- A submit button (altough a if a user is typing the song name and click enter automatically the artist field is selected and the user can type, it the enter key is hit on the artist name field it automatically submits both answers)
+- After the time of guessing has elapsed, both the artist name and song name should be reviled on top of the vynil record. The vynil record than would be replaced with the album cover for that songs. The song will be played for 10 more seconds or until majority of players hits (skip final answer)
+- the end screen should display a podium of the top 3 users of that game using their images and names.
+- there should be 1v1 Sudden-death round if there’s a tie between 2 or more users independent of ranking so even if a user is last and second last but have the same points they shouldve a 1v1. For the 1v1, the algorithm should choose 2 more songs from each player and make them guess, the user that wins is the user that wins by 2 points, so we should fetch 2 more songs if they keep drawing. Before each sudden death a screen like Tekken VS. should be shown with both users, this will let the program fetch the new songs while this vs. screen is being shown.
+-Emotes / reactions during rounds (🔥 😂 😭 🎧)
+-“This was your song” reveal tag after each round
+-End-of-game recap:
+
+Most guessed songs
+
+Hardest song
+
+Fastest guess
+
+-Minimum pool size enforcement before starting (if a user chooses and album that only has 10 songs, the number of songs in the lobby should only be 2/3*number of songs of source * number of users)
+-Answer lock after first submit
+-Animated countdown pulses
+-After song reveal show players that got the song right and how many points they got. Do the same for the ones who got it wrong.
+-Add a leaderboard that shows the current score of all players, this leaderboard should be visible during the game on the side of the screen.
+-Subtle haptic / sound feedback on submit
+-Reconnect protection (drop → rejoin same game)
+-Pre-game track validation (no preview = auto replace)
+-Server-side round state (anti-desync)
+-Latency compensation for speed scoring
+-If all users have locked in the waiting time automatically goes to 3 seconds. if the time is lower than 3 seconds dont do this.
+-the audio playback should continue to the reveal screen as well it shouldnt stop between the two screens.
+-login in and uploading a picture, then loggin in with the same username without uploading a picture, should retrieve the previous picture. if logging in for the N time and uploading a new picture it should replace the old one
+- make sure the conversion from songs to txt goes smoothly, sometimes we are choosing songs from apple music that dont correspond to the actual song. The song name should be present on the apple music song, as well as the artist name should be present on the artist apple music.
+- make sure things in the song title like (feat. ) or (Remix) are removed or handled properly when comparing with user input.
+- make sure the artist name is also cleaned up properly. if a user inputs "Kendrick Lamar" and the song is "Kendrick Lamar, Drake" the song should be accepted.
+- if the user chooses a playlist with more than 50 songs, we should fetch all of them.
+- make sure after every game is completed to delete the room from the database.
