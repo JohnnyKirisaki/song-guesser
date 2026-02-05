@@ -30,8 +30,10 @@ function stripTitleExtras(str: string): string {
         .replace(/\s*\(live.*?\)/gi, ' ')
         .replace(/\s*\(acoustic.*?\)/gi, ' ')
         .replace(/\s*\([^)]*\)/g, ' ')
+        .replace(/\s*\([^)]*$/g, ' ')
         .replace(/\s*\[.*?\]/g, ' ')
         .replace(/\s*-\s*(feat\.?.*|ft\.?.*|with .*|remix|edit|version|mix|live|acoustic|remaster|radio edit|extended mix).*$/gi, ' ')
+        .replace(/\s+(?:[a-z0-9]+\s+)?(?:version|remix|edit|mix|live|acoustic|remaster|instrumental|karaoke|cover|demo|extended)\b/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim()
 }
