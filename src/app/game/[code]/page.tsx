@@ -873,149 +873,150 @@ export default function GamePage() {
 
             {/* Main Game Area */}
             <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', position: 'relative', overflow: 'hidden' }}>
-
-                {/* Album Cover Area (Hidden until Reveal, unless not lyrics mode) */}
-                {(!isLyricsOnly || isReveal) && (
-                    <div
-                        className={`vinyl-container ${isPlaying ? 'spinning' : ''} ${isReveal ? 'reveal' : ''}`}
-                        style={{ marginBottom: '32px' }}
-                    >
-                        <div className="vinyl-grooves" />
-                        <div className={`vinyl-label ${isReveal ? 'reveal' : ''}`}>
-                            {isReveal ? (
-                                <img
-                                    className="vinyl-cover"
-                                    src={currentSong.cover_url}
-                                    style={{
-                                        width: '100%', height: '100%', objectFit: 'cover',
-                                        borderRadius: '50%'
-                                    }}
-                                />
-                            ) : (
-                                <Music size={40} style={{ opacity: 0.3 }} />
-                            )}
-                            <div className="vinyl-hole" />
+                <div className="game-core">
+                    {/* Album Cover Area (Hidden until Reveal, unless not lyrics mode) */}
+                    {(!isLyricsOnly || isReveal) && (
+                        <div
+                            className={`vinyl-container ${isPlaying ? 'spinning' : ''} ${isReveal ? 'reveal' : ''}`}
+                            style={{ marginBottom: '32px' }}
+                        >
+                            <div className="vinyl-grooves" />
+                            <div className={`vinyl-label ${isReveal ? 'reveal' : ''}`}>
+                                {isReveal ? (
+                                    <img
+                                        className="vinyl-cover"
+                                        src={currentSong.cover_url}
+                                        style={{
+                                            width: '100%', height: '100%', objectFit: 'cover',
+                                            borderRadius: '50%'
+                                        }}
+                                    />
+                                ) : (
+                                    <Music size={40} style={{ opacity: 0.3 }} />
+                                )}
+                                <div className="vinyl-hole" />
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {/* Question / Inputs */}
-                {isReveal ? (
-                    <div style={{ textAlign: 'center', animation: 'fadeIn 0.5s', width: '100%' }}>
-                        {currentSong.picked_by_user_id === profile.id && (
-                            <div style={{ marginBottom: '12px', fontWeight: 700, color: '#FFD700' }}>
-                                This was your song
-                            </div>
-                        )}
-                        <h2 className="text-gradient" style={{ fontSize: '2rem', fontWeight: 900, marginBottom: '8px' }}>
-                            {currentSong.track_name}
-                        </h2>
-                        <h3 style={{ fontSize: '1.5rem', color: '#ccc' }}>
-                            {currentSong.artist_name}
-                        </h3>
-                        {songPicker && !isMySong && (
-                            <div className="song-credit">
-                                <img src={songPicker.avatar_url} alt={songPicker.username} />
-                                <span>{songPicker.username} added this song</span>
-                            </div>
-                        )}
+                    {/* Question / Inputs */}
+                    {isReveal ? (
+                        <div style={{ textAlign: 'center', animation: 'fadeIn 0.5s', width: '100%' }}>
+                            {currentSong.picked_by_user_id === profile.id && (
+                                <div style={{ marginBottom: '12px', fontWeight: 700, color: '#FFD700' }}>
+                                    This was your song
+                                </div>
+                            )}
+                            <h2 className="text-gradient" style={{ fontSize: '2rem', fontWeight: 900, marginBottom: '8px' }}>
+                                {currentSong.track_name}
+                            </h2>
+                            <h3 style={{ fontSize: '1.5rem', color: '#ccc' }}>
+                                {currentSong.artist_name}
+                            </h3>
+                            {songPicker && !isMySong && (
+                                <div className="song-credit">
+                                    <img src={songPicker.avatar_url} alt={songPicker.username} />
+                                    <span>{songPicker.username} added this song</span>
+                                </div>
+                            )}
 
-                        <div style={{ marginTop: '18px', width: '100%', maxWidth: '520px', marginLeft: 'auto', marginRight: 'auto' }}>
-                            <div style={{ fontWeight: 700, marginBottom: '10px', opacity: 0.9 }}>Round Results</div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                {displayPlayers.map(p => {
-                                    const correct = (p.last_round_correct_title || p.last_round_correct_artist)
-                                    return (
-                                        <div key={p.id} style={{
-                                            display: 'flex', alignItems: 'center', gap: '12px',
-                                            padding: '8px 12px', borderRadius: '10px',
-                                            background: correct ? 'rgba(30, 215, 96, 0.08)' : 'rgba(233, 20, 41, 0.08)',
-                                            border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`
-                                        }}>
-                                            <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
-                                            <div style={{ flex: 1 }}>
-                                                <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</div>
-                                                <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>
-                                                    {correct ? '✅ Correct' : '❌ Wrong'}
+                            <div style={{ marginTop: '18px', width: '100%', maxWidth: '520px', marginLeft: 'auto', marginRight: 'auto' }}>
+                                <div style={{ fontWeight: 700, marginBottom: '10px', opacity: 0.9 }}>Round Results</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    {displayPlayers.map(p => {
+                                        const correct = (p.last_round_correct_title || p.last_round_correct_artist)
+                                        return (
+                                            <div key={p.id} style={{
+                                                display: 'flex', alignItems: 'center', gap: '12px',
+                                                padding: '8px 12px', borderRadius: '10px',
+                                                background: correct ? 'rgba(30, 215, 96, 0.08)' : 'rgba(233, 20, 41, 0.08)',
+                                                border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`
+                                            }}>
+                                                <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
+                                                <div style={{ flex: 1 }}>
+                                                    <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</div>
+                                                    <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>
+                                                        {correct ? '✅ Correct' : '❌ Wrong'}
+                                                    </div>
+                                                </div>
+                                                <div style={{ fontWeight: 800, color: correct ? '#1ed760' : '#e91429' }}>
+                                                    {correct ? `+${p.last_round_points ?? 0}` : '0'}
                                                 </div>
                                             </div>
-                                            <div style={{ fontWeight: 800, color: correct ? '#1ed760' : '#e91429' }}>
-                                                {correct ? `+${p.last_round_points ?? 0}` : '0'}
-                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+
+                            <div style={{ marginTop: '16px', fontWeight: 'bold' }}>
+                                Next round starting...
+                            </div>
+                        </div>
+                    ) : (
+                        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+                            {isLyricsOnly && (
+                                <div className="lyrics-panel">
+                                    {lyricsLoading ? (
+                                        <div className="lyrics-skeleton">
+                                            <span />
+                                            <span />
+                                            <span />
+                                            <span />
                                         </div>
-                                    )
-                                })}
-                            </div>
-                        </div>
+                                    ) : (
+                                        lyricsSnippet || 'Lyrics unavailable for this song.'
+                                    )}
+                                </div>
+                            )}
 
-                        <div style={{ marginTop: '16px', fontWeight: 'bold' }}>
-                            Next round starting...
-                        </div>
-                    </div>
-                ) : (
-                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
-                        {isLyricsOnly && (
-                            <div className="lyrics-panel">
-                                {lyricsLoading ? (
-                                    <div className="lyrics-skeleton">
-                                        <span />
-                                        <span />
-                                        <span />
-                                        <span />
-                                    </div>
-                                ) : (
-                                    lyricsSnippet || 'Lyrics unavailable for this song.'
+                            <div style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                {showTitleInput && (
+                                    <input
+                                        ref={titleInputRef}
+                                        type="text" placeholder="Guess the Song Title..."
+                                        className="input-field"
+                                        value={guess.title}
+                                        onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault()
+                                                if (showArtistInput) {
+                                                    artistInputRef.current?.focus()
+                                                } else {
+                                                    submitGuess()
+                                                }
+                                            }
+                                        }}
+                                        disabled={hasSubmitted || !canGuess}
+                                    />
                                 )}
-                            </div>
-                        )}
-
-                        <div style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                            {showTitleInput && (
-                                <input
-                                    ref={titleInputRef}
-                                    type="text" placeholder="Guess the Song Title..."
-                                    className="input-field"
-                                    value={guess.title}
-                                    onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault()
-                                            if (showArtistInput) {
-                                                artistInputRef.current?.focus()
-                                            } else {
+                                {showArtistInput && (
+                                    <input
+                                        ref={artistInputRef}
+                                        type="text" placeholder="Guess the Artist..."
+                                        className="input-field"
+                                        value={guess.artist}
+                                        onChange={(e) => setGuess(prev => ({ ...prev, artist: e.target.value }))}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault()
                                                 submitGuess()
                                             }
-                                        }
-                                    }}
+                                        }}
+                                        disabled={hasSubmitted || !canGuess}
+                                    />
+                                )}
+                                <button
+                                    className="btn-primary"
+                                    onClick={submitGuess}
                                     disabled={hasSubmitted || !canGuess}
-                                />
-                            )}
-                            {showArtistInput && (
-                                <input
-                                    ref={artistInputRef}
-                                    type="text" placeholder="Guess the Artist..."
-                                    className="input-field"
-                                    value={guess.artist}
-                                    onChange={(e) => setGuess(prev => ({ ...prev, artist: e.target.value }))}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault()
-                                            submitGuess()
-                                        }
-                                    }}
-                                    disabled={hasSubmitted || !canGuess}
-                                />
-                            )}
-                            <button
-                                className="btn-primary"
-                                onClick={submitGuess}
-                                disabled={hasSubmitted || !canGuess}
-                            >
-                                {hasSubmitted ? 'ANSWER SUBMITTED' : 'SUBMIT GUESS'}
-                            </button>
+                                >
+                                    {hasSubmitted ? 'ANSWER SUBMITTED' : 'SUBMIT GUESS'}
+                                </button>
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )}
+                </div>
             </div>
 
             {/* In-Game Leaderboard */}

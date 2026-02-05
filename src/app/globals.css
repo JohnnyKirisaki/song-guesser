@@ -581,11 +581,18 @@ input:focus, textarea:focus, select:focus {
 
 .game-stage {
   width: 100%;
+}
+
+.game-core {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   transform: translateY(-36px);
 }
 
 @media (max-width: 720px) {
-  .game-stage {
+  .game-core {
     transform: translateY(-18px);
   }
 }
