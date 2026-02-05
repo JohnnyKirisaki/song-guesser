@@ -81,6 +81,8 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     return
                 }
 
+                const formatSong = (song: RoundHistory) => `${song.track_name} - ${song.artist_name}`
+
                 // 1. Most guessed song
                 const songCounts: Record<string, { count: number, song: RoundHistory }> = {}
                 // 2. Hardest song (lowest correct %)
@@ -126,7 +128,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                 if (mostGuessed) {
                     newStats.push({
                         label: 'Most Guessed',
-                        value: mostGuessed.song.track_name,
+                        value: formatSong(mostGuessed.song),
                         subValue: `${mostGuessed.count} correct guesses`,
                         icon: Music,
                         color: '#1ed760'
@@ -136,7 +138,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                 if (hardestSong) {
                     newStats.push({
                         label: 'Hardest Song',
-                        value: hardestSong.song.track_name,
+                        value: formatSong(hardestSong.song),
                         subValue: `${Math.round((hardestSong.correct / hardestSong.total) * 100)}% accuracy`,
                         icon: Zap,
                         color: '#e91429'
@@ -147,7 +149,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     newStats.push({
                         label: 'Fastest Guess',
                         value: fastestGuess.guess.username,
-                        subValue: `${fastestGuess.song.track_name} in ${fastestGuess.guess.time_taken.toFixed(1)} s`,
+                        subValue: `${formatSong(fastestGuess.song)} in ${fastestGuess.guess.time_taken.toFixed(1)} s`,
                         icon: Clock,
                         color: '#3b82f6'
                     })
@@ -242,6 +244,8 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     })
     const winners = sortedPlayers.slice(0, 3)
 
+    const podiumAvatarStyle = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' } as const
+
     return (
         <div className="container flex-center" style={{ minHeight: '100vh', flexDirection: 'column', paddingTop: '40px', paddingBottom: '40px' }}>
             <h1 className="text-gradient" style={{ fontSize: '3rem', marginBottom: '8px' }}>Game Over</h1>
@@ -255,7 +259,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                         {drawPlayers.map(p => (
                             <div key={p.id} className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '200px', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)' }}>
                                 <div style={{ width: '90px', height: '90px', borderRadius: '50%', overflow: 'hidden', border: '3px solid #FFD700', marginBottom: '12px' }}>
-                                    <img src={p.avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    <img src={p.avatar_url} style={podiumAvatarStyle} />
                                 </div>
                                 <h2 style={{ marginBottom: '8px' }}>{p.username}</h2>
                                 <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#FFD700' }}>{p.score} pts</div>
@@ -268,7 +272,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     {winners[1] && (
                         <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '250px', justifyContent: 'flex-end', animationDelay: '200ms' }}>
                             <div style={{ width: '80px', height: '80px', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '12px' }}>
-                                <img src={winners[1].avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <img src={winners[1].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <h2 style={{ marginBottom: '8px' }}>{winners[1].username}</h2>
                             <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{winners[1].score} pts</div>
@@ -279,7 +283,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     {winners[0] && (
                         <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '350px', justifyContent: 'flex-end', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)', order: -1, zIndex: 10 }}>
                             <div style={{ width: '120px', height: '120px', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '16px' }}>
-                                <img src={winners[0].avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <img src={winners[0].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <div style={{ background: '#FFD700', color: 'black', padding: '4px 12px', borderRadius: '20px', fontWeight: 'bold', marginBottom: '16px' }}>
                                 WINNER
@@ -292,7 +296,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     {winners[2] && (
                         <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '200px', justifyContent: 'flex-end', animationDelay: '400ms' }}>
                             <div style={{ width: '70px', height: '70px', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '12px' }}>
-                                <img src={winners[2].avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <img src={winners[2].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <h2 style={{ marginBottom: '8px' }}>{winners[2].username}</h2>
                             <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{winners[2].score} pts</div>

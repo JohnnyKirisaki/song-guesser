@@ -75,8 +75,8 @@ export async function prepareGamePayload(roomCode: string, settings: any) {
 
     const requestedRounds = Math.min(settings.rounds || 10, 50) // Cap at 50 max (matches UI)
 
-    // Enforce max time per round (5-20s)
-    const safeTime = Math.min(Math.max(settings.time || 15, 5), 20)
+    // Enforce max time per round (5-30s)
+    const safeTime = Math.min(Math.max(settings.time || 15, 5), 30)
 
     // Ensure enough unique songs for the requested rounds
     if (uniqueSongs.length < requestedRounds) {

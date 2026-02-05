@@ -391,7 +391,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                         <span style={{ fontWeight: 'bold' }}>{settings.time}s</span>
                     </div>
                     <input
-                        type="range" min="5" max="20" step="5"
+                        type="range" min="5" max="30" step="5"
                         value={settings.time}
                         onChange={(e) => updateSettings({ time: parseInt(e.target.value) })}
                         disabled={!isHost}

@@ -99,7 +99,16 @@ export default function GamePage() {
     const hostId = players.find(p => p.is_host)?.id
     const isHost = profile.id === hostId
     const currentSong = gameState?.playlist[gameState?.current_round_index || 0]
-    const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
+    const mode = roomSettings?.mode || 'normal'
+    const isLyricsOnly = mode === 'lyrics_only'
+    const isArtistOnly = mode === 'artist_only'
+    const isSongOnly = mode === 'song_only'
+    const showTitleInput = mode !== 'artist_only'
+    const showArtistInput = mode !== 'song_only'
+    const duelingIds = gameState?.dueling_player_ids || []
+    const isSuddenDeath = !!gameState?.is_sudden_death
+    const isDuelingPlayer = !isSuddenDeath || duelingIds.length === 0 || duelingIds.includes(profile.id)
+    const canGuess = gameState?.phase === 'playing' && isDuelingPlayer
     const songPicker = currentSong ? players.find(p => p.id === currentSong.picked_by_user_id) : null
     const isMySong = songPicker?.id === profile.id
 
@@ -432,6 +441,7 @@ export default function GamePage() {
     // --------------------------------------------------------------------------------
     const submitGuess = async () => {
         if (hasSubmitted || gameState?.phase !== 'playing') return
+        if (gameState?.is_sudden_death && !isDuelingPlayer) return
 
         const currentGuess = guess // from state
         setHasSubmitted(true)
@@ -457,10 +467,10 @@ export default function GamePage() {
     // Auto-Submit when time runs out (Client Side)
     // Trigger at 0, relying on Host grace period to accept it
     useEffect(() => {
-        if (gameState?.phase === 'playing' && timeLeft <= 0 && !hasSubmitted) {
+        if (gameState?.phase === 'playing' && timeLeft <= 0 && !hasSubmitted && isDuelingPlayer) {
             submitGuess()
         }
-    }, [gameState?.phase, timeLeft, hasSubmitted])
+    }, [gameState?.phase, timeLeft, hasSubmitted, isDuelingPlayer])
 
     // --------------------------------------------------------------------------------
     // 4. HOST LOGIC (State Machine)
@@ -481,7 +491,11 @@ export default function GamePage() {
                 ? new Date(roundStartRaw).getTime()
                 : null
 
-        const allSubmitted = players.length > 0 && players.every(p => {
+        const activePlayers = (gameState?.is_sudden_death && duelingIds.length > 0)
+            ? players.filter(p => duelingIds.includes(p.id))
+            : players
+
+        const allSubmitted = activePlayers.length > 0 && activePlayers.every(p => {
             if (!p.has_submitted) return false
             if (!p.submitted_at) return false
             const submittedAtMs = typeof p.submitted_at === 'number'
@@ -491,7 +505,7 @@ export default function GamePage() {
             if (roundStartMs && submittedAtMs < roundStartMs) return false
             return true
         })
-        if (allSubmitted && players.length > 0) {
+        if (allSubmitted && activePlayers.length > 0) {
             if (timeLeft > 3 && !gameState.force_reveal_at) {
                 // Force a short 3-second countdown
                 update(ref(db, `rooms/${code}/game_state`), {
@@ -501,7 +515,7 @@ export default function GamePage() {
                 processReveal()
             }
         }
-    }, [players, isHost, gameState?.phase, timeLeft, gameState?.force_reveal_at]) // Listen to players update
+    }, [players, isHost, gameState?.phase, timeLeft, gameState?.force_reveal_at, gameState?.is_sudden_death, gameState?.dueling_player_ids]) // Listen to players update
 
     // Keep a ref to players to avoid stale closures in timers
     useEffect(() => {
@@ -589,7 +603,11 @@ export default function GamePage() {
         const roundGuesses: any[] = []
         const roundPoints: Record<string, number> = {}
 
-        currentPlayers.forEach(p => {
+        const scoringPlayers = (currentIsSuddenDeath && (currentGameState.dueling_player_ids || []).length > 0)
+            ? currentPlayers.filter(p => (currentGameState.dueling_player_ids || []).includes(p.id))
+            : currentPlayers
+
+        scoringPlayers.forEach(p => {
             // Calculate
             const g = p.last_guess || { artist: '', title: '' }
             const submittedRaw = p.submitted_at
@@ -699,11 +717,14 @@ export default function GamePage() {
                 if (duelingPlayers.length >= 2) {
                     // Sort by SUDDEN DEATH SCORE
                     const sorted = [...duelingPlayers].sort((a, b) => (b.sudden_death_score || 0) - (a.sudden_death_score || 0))
-                    const lead = (sorted[0]?.sudden_death_score || 0) - (sorted[1]?.sudden_death_score || 0)
+                    const leaderScore = sorted[0]?.sudden_death_score || 0
+                    const secondScore = sorted[1]?.sudden_death_score || 0
+                    const restScores = sorted.slice(1).map(p => p.sudden_death_score || 0)
+                    const restHasTie = restScores.length > 1 && new Set(restScores).size !== restScores.length
 
 
                     // Win-by-2 rule
-                    if (lead >= 2) {
+                    if (leaderScore >= secondScore + 2 && !restHasTie) {
                         const resolvedGroups = new Set(currentGameState.resolved_tie_groups || [])
                         const finishedGroupKey = [...duelingIds].sort().join('|')
                         if (finishedGroupKey) resolvedGroups.add(finishedGroupKey)
@@ -827,6 +848,9 @@ export default function GamePage() {
 
     const isReveal = gameState.phase === 'reveal'
     const displayRound = gameState.is_sudden_death ? (roomSettings?.rounds || (gameState.current_round_index + 1)) : (gameState.current_round_index + 1)
+    const displayPlayers = (isSuddenDeath && duelingIds.length > 0)
+        ? players.filter(p => duelingIds.includes(p.id))
+        : players
 
     return (
         <div className="game-shell" style={{ width: '100%', margin: '0 auto', paddingBottom: '28px', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -899,7 +923,7 @@ export default function GamePage() {
                         <div style={{ marginTop: '18px', width: '100%', maxWidth: '520px', marginLeft: 'auto', marginRight: 'auto' }}>
                             <div style={{ fontWeight: 700, marginBottom: '10px', opacity: 0.9 }}>Round Results</div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                {players.map(p => {
+                                {displayPlayers.map(p => {
                                     const correct = (p.last_round_correct_title || p.last_round_correct_artist)
                                     return (
                                         <div key={p.id} style={{
@@ -946,38 +970,46 @@ export default function GamePage() {
                         )}
 
                         <div style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                            <input
-                                ref={titleInputRef}
-                                type="text" placeholder="Guess the Song Title..."
-                                className="input-field"
-                                value={guess.title}
-                                onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                        e.preventDefault()
-                                        artistInputRef.current?.focus()
-                                    }
-                                }}
-                                disabled={hasSubmitted}
-                            />
-                            <input
-                                ref={artistInputRef}
-                                type="text" placeholder="Guess the Artist..."
-                                className="input-field"
-                                value={guess.artist}
-                                onChange={(e) => setGuess(prev => ({ ...prev, artist: e.target.value }))}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                        e.preventDefault()
-                                        submitGuess()
-                                    }
-                                }}
-                                disabled={hasSubmitted}
-                            />
+                            {showTitleInput && (
+                                <input
+                                    ref={titleInputRef}
+                                    type="text" placeholder="Guess the Song Title..."
+                                    className="input-field"
+                                    value={guess.title}
+                                    onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault()
+                                            if (showArtistInput) {
+                                                artistInputRef.current?.focus()
+                                            } else {
+                                                submitGuess()
+                                            }
+                                        }
+                                    }}
+                                    disabled={hasSubmitted || !canGuess}
+                                />
+                            )}
+                            {showArtistInput && (
+                                <input
+                                    ref={artistInputRef}
+                                    type="text" placeholder="Guess the Artist..."
+                                    className="input-field"
+                                    value={guess.artist}
+                                    onChange={(e) => setGuess(prev => ({ ...prev, artist: e.target.value }))}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault()
+                                            submitGuess()
+                                        }
+                                    }}
+                                    disabled={hasSubmitted || !canGuess}
+                                />
+                            )}
                             <button
                                 className="btn-primary"
                                 onClick={submitGuess}
-                                disabled={hasSubmitted}
+                                disabled={hasSubmitted || !canGuess}
                             >
                                 {hasSubmitted ? 'ANSWER SUBMITTED' : 'SUBMIT GUESS'}
                             </button>
@@ -989,7 +1021,7 @@ export default function GamePage() {
             {/* In-Game Leaderboard */}
             <div className="game-leaderboard">
                 <div className="leaderboard-title">Leaderboard</div>
-                {[...players].sort((a, b) => {
+                {[...displayPlayers].sort((a, b) => {
                     // Primary: Main Score
                     if (b.score !== a.score) return b.score - a.score
                     // Secondary: Sudden Death Score

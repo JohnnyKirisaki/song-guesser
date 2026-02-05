@@ -29,10 +29,21 @@ function stripTitleExtras(str: string): string {
         .replace(/\s*\(remaster.*?\)/gi, ' ')
         .replace(/\s*\(live.*?\)/gi, ' ')
         .replace(/\s*\(acoustic.*?\)/gi, ' ')
+        .replace(/\s*\([^)]*\)/g, ' ')
         .replace(/\s*\[.*?\]/g, ' ')
         .replace(/\s*-\s*(feat\.?.*|ft\.?.*|with .*|remix|edit|version|mix|live|acoustic|remaster|radio edit|extended mix).*$/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim()
+}
+
+const STOP_WORDS = new Set([
+    'the', 'a', 'an', 'of', 'and', 'or', 'to', 'in', 'on', 'at', 'for', 'from', 'by', 'with'
+])
+
+function removeStopWords(normalized: string): string {
+    const tokens = normalized.split(' ').filter(Boolean)
+    const filtered = tokens.filter(token => !STOP_WORDS.has(token))
+    return filtered.length > 0 ? filtered.join(' ') : normalized
 }
 
 function splitArtists(str: string): string[] {
@@ -47,7 +58,7 @@ function splitArtists(str: string): string[] {
 
     return cleaned
         .split(',')
-        .map(s => normalizeForCompare(s))
+        .map(s => removeStopWords(normalizeForCompare(s)))
         .filter(s => s.length > 0)
 }
 
@@ -316,8 +327,8 @@ export function isMatch(guess: string, answer: string, isArtist: boolean = false
     if (!trimmedAnswer) return false
 
     // Use new cleaner normalization for better guessing too
-    const normGuess = normalizeForCompare(isArtist ? trimmedGuess : stripTitleExtras(trimmedGuess))
-    const normAnswer = normalizeForCompare(isArtist ? trimmedAnswer : stripTitleExtras(trimmedAnswer))
+    const normGuess = removeStopWords(normalizeForCompare(isArtist ? trimmedGuess : stripTitleExtras(trimmedGuess)))
+    const normAnswer = removeStopWords(normalizeForCompare(isArtist ? trimmedAnswer : stripTitleExtras(trimmedAnswer)))
 
     if (isArtist) {
         // Split comma separated artists
@@ -367,9 +378,15 @@ export function calculateScore(
     }
 
     if (isSuddenDeath) {
-        // Sudden Death: 1 point for Artist, 1 point for Song (Total 2)
-        if (correctTitle) points += 1
-        if (correctArtist) points += 1
+        // Sudden Death: 1 point per correct field (respect mode if artist/song only)
+        if (mode === 'artist_only') {
+            if (correctArtist) points += 1
+        } else if (mode === 'song_only') {
+            if (correctTitle) points += 1
+        } else {
+            if (correctTitle) points += 1
+            if (correctArtist) points += 1
+        }
     } else if (mode === 'artist_only') {
         if (correctArtist) points += 1
     } else if (mode === 'song_only') {
