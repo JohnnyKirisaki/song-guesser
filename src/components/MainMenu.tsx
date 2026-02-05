@@ -4,7 +4,8 @@ import { useUser } from '@/context/UserContext'
 import { Trophy, Plus, LogIn, Edit2, X } from 'lucide-react'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { db } from '@/lib/firebase' // Firebase DB
+import { ref, set, get, child } from 'firebase/database'
 import { generateRoomCode } from '@/lib/game-utils'
 import ProfileEditor from '@/components/ProfileEditor'
 
@@ -12,7 +13,7 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
     onCreateRoom: () => void,
     onJoinRoom: () => void
 }) {
-    const { profile, user } = useUser()
+    const { profile } = useUser()
     const [isHoveringProfile, setIsHoveringProfile] = useState(false)
     const [showJoinModal, setShowJoinModal] = useState(false)
     const [showEditProfile, setShowEditProfile] = useState(false)
@@ -26,41 +27,30 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
         try {
             setLoading(true)
 
-            // Cleanup old rooms before creating new one
-
-            // 1. Delete finished rooms older than 1 minute
-            const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString()
-            await supabase.from('rooms').delete()
-                .eq('status', 'finished')
-                .lt('finished_at', oneMinuteAgo)
-
-            // 2. Delete rooms older than 30 minutes (safety net)
-            const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString()
-            await supabase.from('rooms').delete().lt('created_at', thirtyMinsAgo)
-
+            // Generate Code
             const code = generateRoomCode()
 
-            // Create Room
-            const { error: roomError } = await supabase
-                .from('rooms')
-                .insert({
-                    code,
-                    host_id: profile.id,
-                    settings: { rounds: 10, time: 15, mode: 'normal' }
-                })
+            // Create Room in Firebase
+            // Structure: /rooms/{code}
+            const roomData = {
+                code,
+                host_id: profile.id,
+                status: 'waiting',
+                created_at: new Date().toISOString(),
+                settings: { rounds: 10, time: 15, mode: 'normal' },
+                players: {
+                    [profile.id]: {
+                        id: profile.id,
+                        username: profile.username,
+                        avatar_url: profile.avatar_url,
+                        score: 0,
+                        is_ready: false,
+                        is_host: true
+                    }
+                }
+            }
 
-            if (roomError) throw roomError
-
-            // Join Room as Player
-            const { error: playerError } = await supabase
-                .from('room_players')
-                .insert({
-                    room_code: code,
-                    user_id: profile.id,
-                    is_ready: false // Host needs to import songs too
-                })
-
-            if (playerError) throw playerError
+            await set(ref(db, 'rooms/' + code), roomData)
 
             router.push(`/room/${code}`)
         } catch (error) {
@@ -79,36 +69,17 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
             setLoading(true)
             const code = joinCode.toUpperCase()
 
-            // Check existence
-            const { data: room, error: roomError } = await supabase
-                .from('rooms')
-                .select('code')
-                .eq('code', code)
-                .single()
+            // Check existence in Firebase
+            const snapshot = await get(child(ref(db), `rooms/${code}`))
 
-            if (roomError || !room) {
+            if (!snapshot.exists()) {
                 alert('Room not found')
                 return
             }
 
-            // Join
-            const { error: joinError } = await supabase
-                .from('room_players')
-                .insert({
-                    room_code: code,
-                    user_id: profile.id
-                })
-
-            if (joinError) {
-                if (joinError.code === '23505') {
-                    // Already joined, just redirect
-                    router.push(`/room/${code}`)
-                    return
-                }
-                throw joinError
-            }
-
+            // We just redirect. The Lobby component will handle adding the user to "players" list.
             router.push(`/room/${code}`)
+
         } catch (error) {
             console.error('Error joining room:', error)
             alert('Failed to join room')
@@ -130,8 +101,8 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
             }}>
                 {/* Stats (Top Left) */}
                 <div className="glass-panel" style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Trophy size={16} color="#FFD700" />
-                    <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{profile.wins} Wins</span>
+                    <Trophy size={16} color="var(--tertiary)" />
+                    <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{profile.wins ?? 0} Wins</span>
                 </div>
 
                 {/* Profile (Top Right) */}
@@ -171,7 +142,7 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
 
             {/* Center Content */}
             <div className="container" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ width: '100%', maxWidth: '900px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '32px' }}>
+                <div style={{ width: '100%', maxWidth: '1100px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '32px' }}>
 
                     {/* Create Room Card */}
                     <button
@@ -208,11 +179,11 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                             pointerEvents: 'none'
                         }} />
 
-                        <div style={{
-                            width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(30, 215, 96, 0.1)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'var(--primary)'
-                        }}>
+                    <div style={{
+                        width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(46, 242, 160, 0.12)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: 'var(--primary)'
+                    }}>
                             <Plus size={40} />
                         </div>
                         <div style={{ textAlign: 'center' }}>
@@ -237,18 +208,18 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                         }}
                         onMouseEnter={(e) => {
                             e.currentTarget.style.transform = 'translateY(-8px)'
-                            e.currentTarget.style.borderColor = '#450af5'
+                            e.currentTarget.style.borderColor = 'var(--secondary)'
                         }}
                         onMouseLeave={(e) => {
                             e.currentTarget.style.transform = 'translateY(0)'
                             e.currentTarget.style.borderColor = 'var(--glass-border)'
                         }}
                     >
-                        <div style={{
-                            width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(69, 10, 245, 0.1)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: '#450af5'
-                        }}>
+                    <div style={{
+                        width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(60, 184, 255, 0.12)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: 'var(--secondary)'
+                    }}>
                             <LogIn size={40} />
                         </div>
                         <div style={{ textAlign: 'center' }}>
@@ -277,20 +248,18 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
 
                         <h2 style={{ marginBottom: '24px', textAlign: 'center' }}>Enter Room Code</h2>
                         <form onSubmit={handleJoinRoom}>
-                            <input
-                                autoFocus
-                                type="text"
-                                value={joinCode}
-                                onChange={(e) => setJoinCode(e.target.value)}
-                                placeholder="e.g. A1B2C3"
-                                style={{
-                                    width: '100%', padding: '16px',
-                                    fontSize: '1.5rem', textAlign: 'center', letterSpacing: '4px',
-                                    marginBottom: '24px', borderRadius: 'var(--radius-md)',
-                                    background: '#222', border: '1px solid #333', color: 'white',
-                                    textTransform: 'uppercase'
-                                }}
-                            />
+                        <input
+                            autoFocus
+                            type="text"
+                            value={joinCode}
+                            onChange={(e) => setJoinCode(e.target.value)}
+                            placeholder="e.g. A1B2C3"
+                            className="ui-input"
+                            style={{
+                                fontSize: '1.5rem', textAlign: 'center', letterSpacing: '4px',
+                                marginBottom: '24px', textTransform: 'uppercase'
+                            }}
+                        />
                             <button type="submit" className="btn-primary" style={{ width: '100%' }}>
                                 {loading ? 'Joining...' : 'Join Game'}
                             </button>

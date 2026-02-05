@@ -1,448 +1,441 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useUser } from '@/context/UserContext'
-import { supabase } from '@/lib/supabase'
-import { Users, Clock, Music, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown } from 'lucide-react'
+import { db } from '@/lib/firebase'
+import { ref, onValue, update, remove } from 'firebase/database'
+import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { fetchSpotifyData, addSongsToRoom } from '@/lib/spotify'
-import { initializeGame } from '@/lib/game-logic'
 
 type Player = {
-    user_id: string
+    id: string
+    username: string
+    avatar_url: string
     score: number
     is_ready: boolean
-    profile: {
-        username: string
-        avatar_url: string
-    }
+    is_host: boolean
+    is_importing?: boolean
 }
 
 type RoomSettings = {
     rounds: number
     time: number
-    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only'
+    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only'
 }
 
 export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { roomCode: string, initialSettings: any, isHost: boolean, hostId: string }) {
     const { profile } = useUser()
     const router = useRouter()
+
+    // State
     const [players, setPlayers] = useState<Player[]>([])
     const [settings, setSettings] = useState<RoomSettings>(initialSettings)
-    const [spotifyLink, setSpotifyLink] = useState('')
-    const [songsAdded, setSongsAdded] = useState(false)
-    const [isImporting, setIsImporting] = useState(false)
-    const [copied, setCopied] = useState(false)
-    const [songCount, setSongCount] = useState(0)
     const [isStarting, setIsStarting] = useState(false)
+    const [loadingMsg, setLoadingMsg] = useState('Starting...')
+    const [copied, setCopied] = useState(false)
 
-    // Define fetch functions with useCallback to prevent stale closures
-    const fetchPlayers = useCallback(async () => {
-        // DEBUG: Check visibility without Join
-        const { count: rawCount } = await supabase.from('room_players').select('*', { count: 'exact', head: true }).eq('room_code', roomCode)
+    // Import State
+    const [importUrl, setImportUrl] = useState('')
+    const [importing, setImporting] = useState(false)
+    const [importProgress, setImportProgress] = useState(0)
+    const [allSongs, setAllSongs] = useState<any[]>([])
 
-        // DEBUG: Check TRUE count (Server Side)
-        const { data: serverCount, error: rpcError } = await supabase.rpc('get_debug_player_count', { p_room_code: roomCode })
-        const { data, error } = await supabase
-            .from('room_players')
-            .select('*, profile:profiles(username, avatar_url)')
-            .eq('room_code', roomCode)
+    // Derived
+    const currentPlayer = players.find(p => p.id === profile?.id)
+    const totalSongs = allSongs.length
+    const mySongs = useMemo(() => allSongs.filter(s => s.user_id === profile?.id), [allSongs, profile?.id])
+    const hasImported = mySongs.length > 0
 
-        if (error) {
-            console.error('[Lobby] Error fetching players:', error)
+    // --------------------------------------------------------------------------------
+    // 1. FIREBASE LISTENER
+    // --------------------------------------------------------------------------------
+    useEffect(() => {
+        const roomRef = ref(db, `rooms/${roomCode}`)
+
+        const unsubscribe = onValue(roomRef, (snapshot) => {
+            const data = snapshot.val()
+
+            if (!data) {
+                router.push('/')
+                return
+            }
+
+            if (data.settings) setSettings(data.settings)
+
+            if (data.players) {
+                setPlayers(Object.values(data.players))
+            } else {
+                setPlayers([])
+            }
+
+            if (data.songs) {
+                setAllSongs(Object.values(data.songs))
+            } else {
+                setAllSongs([])
+            }
+
+            if (data.status === 'playing') {
+                router.push(`/game/${roomCode}`)
+            }
+        })
+
+        return () => unsubscribe()
+    }, [roomCode, router])
+
+    // --------------------------------------------------------------------------------
+    // 2. ACTIONS
+    // --------------------------------------------------------------------------------
+    const toggleReady = async () => {
+        if (!profile) return
+        const playerRef = ref(db, `rooms/${roomCode}/players/${profile.id}`)
+        await update(playerRef, {
+            is_ready: !currentPlayer?.is_ready
+        })
+    }
+
+    const updateSettings = async (newSettings: Partial<RoomSettings>) => {
+        if (!isHost) return
+        const roomRef = ref(db, `rooms/${roomCode}`)
+        await update(roomRef, {
+            settings: { ...settings, ...newSettings }
+        })
+    }
+
+    const handleImport = async () => {
+        if (!importUrl || !profile) return
+
+        // Restriction
+        if (hasImported) {
+            alert('You have already imported a playlist!')
             return
         }
 
-        if (data) {
-            setPlayers(data as any)
-        }
-    }, [roomCode])
-
-    const fetchSongCount = useCallback(async () => {
-        const { count } = await supabase
-            .from('room_songs')
-            .select('*', { count: 'exact', head: true })
-            .eq('room_code', roomCode)
-
-        if (count !== null) setSongCount(count)
-    }, [roomCode])
-
-    useEffect(() => {
-        // Fetch initial players
-        fetchPlayers()
-        fetchSongCount()
-
-        // Fallback Polling (Every 3s)
-        const pollInterval = setInterval(() => {
-            fetchPlayers()
-            fetchSongCount()
-        }, 3000)
-
-        // Realtime Subscription
-        const channel = supabase
-            .channel(`room_lobby_${roomCode}`) // Unique channel name
-            .on('postgres_changes', {
-                event: '*',
-                schema: 'public',
-                table: 'room_players',
-                filter: `room_code=eq.${roomCode}`
-            }, (payload) => {
-                // Small delay to ensure DB write propagation before read
-                setTimeout(() => {
-                    fetchPlayers()
-                }, 500)
-            })
-            .on('postgres_changes', {
-                event: 'UPDATE',
-                schema: 'public',
-                table: 'rooms',
-                filter: `code=eq.${roomCode}`
-            }, (payload) => {
-                if (payload.new.status === 'playing') {
-                    router.push(`/game/${roomCode}`)
-                }
-                if (payload.new.settings) {
-                    setSettings(payload.new.settings)
-                }
-            })
-            .subscribe((status, err) => {
-                })
-
-        return () => {
-            clearInterval(pollInterval)
-            supabase.removeChannel(channel)
-        }
-    }, [roomCode, router, fetchPlayers, fetchSongCount])
-
-    const copyLink = () => {
-        const url = `${window.location.origin}/room/${roomCode}` // In real app, maybe dedicated join link
-        navigator.clipboard.writeText(url)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-    }
-
-    const addSongs = async () => {
-        if (!spotifyLink) return
-        if (!profile) return
-        if (isImporting) return
-
-        setIsImporting(true)
         try {
-            const tracks = await fetchSpotifyData(spotifyLink)
-            // 1. Add songs
+            setImporting(true)
+            setImportProgress(0)
+
+            // Mark as importing in DB
+            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true })
+
+            const tracks = await fetchSpotifyData(importUrl, (value) => {
+                const clamped = Math.min(100, Math.max(0, Math.round(value)))
+                setImportProgress(clamped)
+            })
             await addSongsToRoom(roomCode, profile.id, tracks)
-            // 2. Mark as ready
-            const { error: updateError } = await supabase
-                .from('room_players')
-                .update({ is_ready: true, playlist_url: spotifyLink })
-                .eq('room_code', roomCode)
-                .eq('user_id', profile.id)
+            setImportUrl('')
 
-            if (updateError) {
-                console.error('Error updating ready status:', updateError)
-                throw updateError
-            }
-
-            setSongsAdded(true)
-
-            // 3. Force refresh immediately
-            await fetchPlayers()
+            // Auto-Ready & Finished Importing
+            const playerRef = ref(db, `rooms/${roomCode}/players/${profile.id}`)
+            await update(playerRef, { is_ready: true, is_importing: false })
 
         } catch (error: any) {
-            console.error('Error adding songs', error)
-            alert(`Failed to import songs: ${error.message}`)
+            console.error(error)
+            alert(error.message || 'Failed to import playlist')
+            // Reset importing flag on error
+            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: false })
         } finally {
-            setIsImporting(false)
+            setImporting(false)
+            setImportProgress(0)
         }
     }
 
     const startGame = async () => {
         if (!isHost) return
-        if (!allReady) {
-            alert('Wait for all players to be ready!')
-            return
-        }
-        if (isStarting) {
+
+        if (totalSongs === 0) {
+            alert('No songs available. Import a playlist first!')
             return
         }
 
         setIsStarting(true)
+        setLoadingMsg('Strategies...') // Initial Loading Message
+
         try {
-            await initializeGame(roomCode, settings)
-            router.push(`/game/${roomCode}`)
-        } catch (error: any) {
-            console.error('[Lobby] Failed to start game:', error)
-            console.error('[Lobby] Error Details:', JSON.stringify(error, null, 2))
-            alert(`Failed to start game: ${error.message || 'Unknown error'}`)
+            // 1. Prepare Payload (Generates Playlist)
+            const { prepareGamePayload } = await import('@/lib/game-logic')
+            const { updates, playlist } = await prepareGamePayload(roomCode, settings)
+
+            // 2. Lyrics Mode: Prefetch ONLY relevant songs
+            if (settings.mode === 'lyrics_only') {
+                const songsToFetch = playlist // ONLY the songs selected for this game
+                console.log(`[Lobby] Prefetching lyrics for ${songsToFetch.length} selected songs...`)
+
+                const BATCH_SIZE = 5
+                const lyricsUpdates: Record<string, string> = {}
+
+                for (let i = 0; i < songsToFetch.length; i += BATCH_SIZE) {
+                    const batch = songsToFetch.slice(i, i + BATCH_SIZE)
+                    setLoadingMsg('Fetching Lyrics...')
+
+                    await Promise.all(batch.map(async (song) => {
+                        try {
+                            const res = await fetch(`/api/lyrics?artist=${encodeURIComponent(song.artist_name)}&title=${encodeURIComponent(song.track_name)}`)
+                            const data = await res.json()
+                            if (data.lyrics) {
+                                // Add to batched updates object
+                                lyricsUpdates[song.id] = data.lyrics
+                            }
+                        } catch (e) {
+                            console.error(`Failed to fetch lyrics for ${song.track_name}`, e)
+                        }
+                    }))
+                    // Small delay to be nice to API
+                    await new Promise(r => setTimeout(r, 200))
+                }
+
+                // Write ALL lyrics at once to `rooms/${code}/lyrics_cache`
+                if (Object.keys(lyricsUpdates).length > 0) {
+                    // Merge with main updates? No, separate write is cleaner for large data.
+                    // Actually, `update` works great with deep paths.
+                    // We'll write to lyrics_cache node directly.
+                    await update(ref(db, `rooms/${roomCode}/lyrics_cache`), lyricsUpdates)
+                }
+            }
+
+            setLoadingMsg('Starting...')
+
+            // 3. Commit Game Start
+            await update(ref(db), updates)
+
+        } catch (e: any) {
+            console.error(e)
+            alert('Failed to start game: ' + e.message)
             setIsStarting(false)
         }
     }
 
-    const updateSettings = async (newSettings: Partial<RoomSettings>) => {
-        if (!isHost) return
-        const updated = { ...settings, ...newSettings }
-        setSettings(updated)
-        // Debounce this in real app
-        await supabase.from('rooms').update({ settings: updated }).eq('code', roomCode)
+    const kickPlayer = async (playerId: string) => {
+        if (!isHost || playerId === hostId) return
+        if (!confirm('Kick this player?')) return
+        const playerRef = ref(db, `rooms/${roomCode}/players/${playerId}`)
+        await remove(playerRef)
     }
 
-    const allReady = players.length > 0 && players.every(p => p.is_ready)
+    const leaveRoom = async () => {
+        if (!profile) return
+        const playerRef = ref(db, `rooms/${roomCode}/players/${profile.id}`)
+        await remove(playerRef)
+        router.push('/')
+    }
+
+    const deleteRoom = async () => {
+        if (!isHost) return
+        if (!confirm('Delete Room?')) return
+        const roomRef = ref(db, `rooms/${roomCode}`)
+        await remove(roomRef)
+        router.push('/')
+    }
+
+    const copyCode = () => {
+        navigator.clipboard.writeText(window.location.href)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+    }
+
+    const modes = [
+        { id: 'normal', icon: Music, label: 'Normal' },
+        { id: 'rapid', icon: Zap, label: 'Rapid' },
+        { id: 'artist_only', icon: Mic2, label: 'Artist' },
+        { id: 'song_only', icon: Disc, label: 'Song' },
+        { id: 'lyrics_only', icon: FileText, label: 'Lyrics' }
+    ]
 
     return (
-        <div className="container" style={{ padding: '40px 0', maxWidth: '1000px' }}>
-
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
-                <div>
-                    <h1 className="text-gradient" style={{ fontSize: '3rem', fontWeight: 900 }}>Room {roomCode}</h1>
-                    <button
-                        onClick={copyLink}
-                        style={{
-                            display: 'flex', alignItems: 'center', gap: '8px',
-                            color: 'var(--text-muted)', marginTop: '8px',
-                            padding: '8px 16px', background: 'var(--surface)', borderRadius: 'var(--radius-full)'
-                        }}
-                    >
-                        {copied ? <Check size={16} color="var(--primary)" /> : <Copy size={16} />}
-                        {copied ? 'Copied!' : 'Copy Invite Link'}
-                    </button>
+        <div style={{
+            display: 'flex', gap: '24px', height: 'calc(100vh - 100px)',
+            padding: '24px', maxWidth: '1200px', margin: '0 auto', flexWrap: 'wrap'
+        }}>
+            {/* LEFT: Player List */}
+            <div className="glass-panel" style={{ flex: '1 1 300px', padding: '24px', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                    <Users className="text-primary" size={24} color="var(--primary)" />
+                    <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Players ({players.length})</h2>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <div className="glass-panel" style={{ padding: '8px 16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <Users size={16} /> {players.length} Players
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1 }}>
+                    {players.map((p) => (
+                        <div key={p.id} className="glass-panel" style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px',
+                            border: '1px solid', borderColor: p.is_ready ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
+                            background: p.is_ready ? 'rgba(46, 242, 160, 0.08)' : 'rgba(255, 255, 255, 0.04)'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <img src={p.avatar_url} alt={p.username} style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+                                <div>
+                                    <div style={{ fontWeight: 700 }}>{p.username}</div>
+                                    <div style={{ fontSize: '0.8rem', color: p.is_ready ? 'var(--primary)' : 'var(--text-muted)' }}>
+                                        {p.is_ready ? 'READY' : 'NOT READY'}
+                                    </div>
+                                </div>
+                            </div>
+                            {isHost && p.id !== hostId && (
+                                <button onClick={() => kickPlayer(p.id)} style={{ color: 'var(--error)', padding: '4px' }}><XCircle size={16} /></button>
+                            )}
+                            {p.id === hostId && <Crown size={16} color="#fbbf24" />}
+                        </div>
+                    ))}
+                </div>
+
+                <div style={{ marginTop: '24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span style={{ fontWeight: 700 }}>Room Code:</span>
+                        <span style={{ fontWeight: 900, letterSpacing: '2px' }}>{roomCode}</span>
                     </div>
-                    <button
-                        onClick={() => { fetchPlayers(); fetchSongCount(); }}
-                        className="glass-panel"
-                        style={{
-                            padding: '8px 12px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            fontSize: '0.85rem',
-                            color: 'var(--text-muted)',
-                            transition: 'all 0.2s'
-                        }}
-                        title="Refresh player list"
-                    >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
-                        </svg>
-                        Refresh
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <input readOnly value={window.location.href} className="ui-input" style={{ flex: 1, textOverflow: 'ellipsis', padding: '8px', color: 'var(--text-muted)' }} />
+                        <button onClick={copyCode} className="btn-primary" style={{ padding: '8px 16px', minWidth: 'auto' }}>
+                            {copied ? <Check size={18} /> : <Copy size={18} />}
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '32px' }}>
-
-                {/* Main Column */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-
-                    {/* Player List */}
-                    <div className="glass-panel" style={{ padding: '24px' }}>
-                        <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            Players
-                        </h3>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '16px' }}>
-                            {players.map(p => (
-                                <div key={p.user_id} style={{ textAlign: 'center' }}>
-                                    <div style={{ position: 'relative', width: '80px', height: '80px', margin: '0 auto 8px' }}>
-                                        <img
-                                            src={p.profile?.avatar_url || 'https://via.placeholder.com/80'}
-                                            style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-                                        />
-                                        {p.is_ready && (
-                                            <div style={{
-                                                position: 'absolute', bottom: 0, right: 0,
-                                                background: 'var(--primary)', borderRadius: '50%', padding: '4px'
-                                            }}>
-                                                <Check size={12} color="black" />
-                                            </div>
-                                        )}
-                                        {/* Crown for Host */}
-                                        {p.user_id === hostId && (
-                                            <div style={{
-                                                position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)',
-                                                color: '#FFD700', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))'
-                                            }}>
-                                                <Crown size={24} fill="#FFD700" />
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div style={{ fontWeight: 600 }}>{p.profile?.username || 'Guest'}</div>
-                                    {p.user_id === profile?.id && <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>(You)</span>}
-                                </div>
-                            ))}
-                        </div>
+            {/* RIGHT: Settings */}
+            <div className="glass-panel" style={{ flex: '1.5 1 400px', padding: '32px', display: 'flex', flexDirection: 'column', gap: '24px', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <SettingsIcon className="text-primary" size={24} color="var(--primary)" />
+                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Game Settings</h2>
                     </div>
-
-                    {/* Song Selection */}
-                    <div className="glass-panel" style={{ padding: '24px' }}>
-                        <h3 style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Music size={20} className="text-gradient" /> Your Song Selection
-                        </h3>
-                        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                            Paste a <b>Spotify or YouTube Playlist Link</b>.
-                        </p>
-                        <div style={{ display: 'flex', gap: '12px' }}>
-                            <input
-                                type="text"
-                                placeholder="Paste Spotify or YouTube Playlist URL"
-                                value={spotifyLink}
-                                onChange={(e) => setSpotifyLink(e.target.value)}
-                                disabled={songsAdded || isImporting}
-                                style={{
-                                    flex: 1, padding: '12px', borderRadius: 'var(--radius-md)',
-                                    background: '#222', border: '1px solid #333', color: 'white'
-                                }}
-                            />
-                            <button
-                                onClick={addSongs}
-                                className="btn-primary"
-                                disabled={!spotifyLink || songsAdded || isImporting}
-                                style={{ opacity: (!spotifyLink || songsAdded || isImporting) ? 0.5 : 1 }}
-                            >
-                                {songsAdded ? (
-                                    'Ready'
-                                ) : isImporting ? (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <Loader2 size={16} className="animate-spin" />
-                                        <span>Importing</span>
-                                    </div>
-                                ) : (
-                                    'Import'
-                                )}
-                            </button>
-                        </div>
-                        {songsAdded && (
-                            <div style={{ marginTop: '10px', color: '#4ade80', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <Check size={14} /> Songs added successfully!
-                            </div>
-                        )}
-                    </div>
-
+                    {isHost ? (
+                        <button onClick={deleteRoom} style={{ display: 'flex', gap: '8px', padding: '8px 16px', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: '99px', alignItems: 'center', fontSize: '0.9rem' }}><LogOut size={16} /> Delete Room</button>
+                    ) : (
+                        <button onClick={leaveRoom} style={{ display: 'flex', gap: '8px', padding: '8px 16px', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: '99px', alignItems: 'center', fontSize: '0.9rem' }}><LogOut size={16} /> Leave</button>
+                    )}
                 </div>
 
-                {/* Settings Column (Right) */}
-                <div className="glass-panel" style={{ padding: '24px', height: 'fit-content' }}>
-                    <h3 style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <SettingsIcon size={20} /> Room Settings
+                {/* IMPORT SECTION */}
+                <div className="glass-panel" style={{ padding: '20px', background: 'rgba(255,255,255,0.03)' }}>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>Import Playlist</span>
+                        </div>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Total: {totalSongs}</span>
                     </h3>
 
-                    {/* Rounds */}
-                    <div style={{ marginBottom: '20px' }}>
-                        <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>
-                            Rounds
-                            {songCount > 0 && (
-                                <span style={{ marginLeft: '8px', fontSize: '0.8rem', color: '#888' }}>
-                                    (Max: {Math.floor((2 / 3) * songCount)})
-                                </span>
-                            )}
-                        </label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <input
-                                type="range"
-                                min="5"
-                                max={Math.min(30, Math.max(5, Math.floor((2 / 3) * songCount)))}
-                                step="1"
-                                value={Math.min(settings.rounds, Math.floor((2 / 3) * songCount))}
-                                onChange={(e) => updateSettings({ rounds: parseInt(e.target.value) })}
-                                disabled={!isHost}
-                                style={{ flex: 1, opacity: (!isHost) ? 0.5 : 1 }}
-                            />
-                            <span style={{ width: '40px', textAlign: 'center', fontWeight: 'bold' }}>{settings.rounds}</span>
-                        </div>
-                        {songCount > 0 && songCount < 15 && (
-                            <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '6px 10px', borderRadius: '6px' }}>
-                                ⚠️ Low song count! Add more tracks for better variety.
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Time per Round */}
-                    <div style={{ marginBottom: '20px' }}>
-                        <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Time (Seconds)</label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <input
-                                type="range" min="5" max="20" step="5"
-                                value={settings.time}
-                                onChange={(e) => updateSettings({ time: parseInt(e.target.value) })}
-                                disabled={!isHost}
-                                style={{ flex: 1, opacity: (!isHost) ? 0.5 : 1 }}
-                            />
-                            <span style={{ width: '30px', textAlign: 'center', fontWeight: 'bold' }}>{settings.time}s</span>
-                        </div>
-                    </div>
-
-                    {/* Game Mode */}
-                    <div style={{ marginBottom: '20px' }}>
-                        <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Game Mode</label>
-                        <div style={{ display: 'flex', gap: '8px', background: '#333', padding: '4px', borderRadius: '8px', flexWrap: 'wrap' }}>
-                            {['normal', 'rapid', 'artist_only', 'song_only', 'lyrics_only'].map((mode) => (
-                                <button
-                                    key={mode}
-                                    onClick={() => updateSettings({ mode: mode as any })}
-                                    disabled={!isHost}
-                                    style={{
-                                        flex: 1,
-                                        minWidth: '80px',
-                                        padding: '8px',
-                                        borderRadius: '6px',
-                                        background: settings.mode === mode ? 'var(--primary)' : 'transparent',
-                                        color: settings.mode === mode ? 'black' : 'white',
-                                        fontWeight: settings.mode === mode ? 'bold' : 'normal',
-                                        fontSize: '0.8rem',
-                                        textTransform: 'capitalize',
-                                        transition: 'all 0.2s',
-                                        opacity: (!isHost) ? 0.5 : 1
-                                    }}
-                                >
-                                    {mode.replace('_', ' ')}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Start Button */}
-                    {isHost ? (
-                        <button
-                            onClick={startGame}
-                            disabled={!allReady || isStarting}
-                            className="btn-primary"
-                            style={{
-                                width: '100%',
-                                padding: '16px',
-                                fontSize: '1.2rem',
-                                marginTop: '24px',
-                                opacity: allReady ? 1 : 0.5,
-                                cursor: allReady ? 'pointer' : 'not-allowed'
-                            }}
-                        >
-                            {isStarting ? (
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                    <Loader2 className="spin" /> STARTING...
-                                </div>
-                            ) : allReady ? (
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                    <Play fill="black" /> START GAME
-                                </div>
-                            ) : (
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                    <Loader2 className="animate-spin" /> WAITING FOR PLAYERS...
-                                </div>
-                            )}
-                        </button>
-                    ) : (
+                    {hasImported ? (
                         <div style={{
-                            marginTop: '24px', padding: '16px', background: '#333',
-                            borderRadius: 'var(--radius-md)', textAlign: 'center', color: '#aaa'
+                            background: 'rgba(46, 242, 160, 0.12)', border: '1px solid rgba(46, 242, 160, 0.25)',
+                            borderRadius: '8px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', color: 'var(--primary)'
                         }}>
-                            Waiting for host to start...
+                            <CheckCircle size={24} />
+                            <div style={{ fontWeight: 600 }}>Playlist Imported ({mySongs.length} songs)</div>
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                            <input
+                                type="text" placeholder="Spotify or YouTube URL..."
+                                value={importUrl} onChange={(e) => setImportUrl(e.target.value)}
+                                className="ui-input"
+                                style={{ flex: 1, padding: '10px' }}
+                            />
+                            <button
+                                onClick={handleImport} disabled={importing || !importUrl}
+                                className="btn-primary" style={{ padding: '0 20px', fontSize: '0.9rem', minWidth: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            >
+                                {importing ? (
+                                    <span className="import-progress">
+                                        <span className="import-progress__ring" style={{ ['--progress' as any]: importProgress }} />
+                                        <span className="import-progress__text">{importProgress}%</span>
+                                    </span>
+                                ) : 'Import'}
+                            </button>
                         </div>
                     )}
                 </div>
 
+                {/* GAME MODES */}
+                <div>
+                    <label style={{ display: 'block', marginBottom: '12px', fontWeight: 600 }}>Game Mode</label>
+                    <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '8px' }}>
+                        {modes.map(mode => (
+                            <button
+                                key={mode.id}
+                                onClick={() => updateSettings({ mode: mode.id as any })}
+                                disabled={!isHost}
+                                style={{
+                                    flex: '1', minWidth: '80px', padding: '12px 8px', borderRadius: '12px',
+                                    background: settings.mode === mode.id ? 'var(--primary)' : 'rgba(255,255,255,0.04)',
+                                    color: settings.mode === mode.id ? '#04110b' : 'var(--text-muted)',
+                                    border: '1px solid', borderColor: settings.mode === mode.id ? 'var(--primary)' : 'rgba(255,255,255,0.1)',
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
+                                    transition: 'all 0.2s', opacity: (!isHost && settings.mode !== mode.id) ? 0.5 : 1
+                                }}
+                            >
+                                <mode.icon size={20} />
+                                <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{mode.label}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* SLIDERS */}
+                <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <label>Rounds</label>
+                        <span style={{ fontWeight: 'bold' }}>{settings.rounds}</span>
+                    </div>
+                    <input
+                        type="range" min="5" max="50" step="5"
+                        value={settings.rounds}
+                        onChange={(e) => updateSettings({ rounds: parseInt(e.target.value) })}
+                        disabled={!isHost}
+                        style={{ width: '100%', accentColor: 'var(--primary)', height: '6px', borderRadius: '3px', cursor: 'pointer' }}
+                    />
+                </div>
+
+                <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <label>Time per Round</label>
+                        <span style={{ fontWeight: 'bold' }}>{settings.time}s</span>
+                    </div>
+                    <input
+                        type="range" min="5" max="20" step="5"
+                        value={settings.time}
+                        onChange={(e) => updateSettings({ time: parseInt(e.target.value) })}
+                        disabled={!isHost}
+                        style={{ width: '100%', accentColor: 'var(--primary)' }}
+                    />
+                </div>
+
+                <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'center' }}>
+                    {isHost ? (
+                        <button
+                            onClick={startGame}
+                            disabled={isStarting || players.some(p => p.is_importing)}
+                            className="btn-primary"
+                            style={{ padding: '16px 48px', fontSize: '1.2rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}
+                        >
+                            {isStarting ? (
+                                <><Loader2 className="animate-spin" /> {loadingMsg}</>
+                            ) : players.some(p => p.is_importing) ? (
+                                <><Loader2 className="animate-spin" /> Waiting for imports...</>
+                            ) : (
+                                <><Play fill="currentColor" /> START GAME</>
+                            )}
+                        </button>
+                    ) : (
+                        <button
+                            onClick={toggleReady}
+                            style={{
+                                padding: '16px 48px', fontSize: '1.2rem', width: '100%', cursor: 'pointer', borderRadius: '99px',
+                                border: currentPlayer?.is_ready ? '2px solid var(--primary)' : '1px solid rgba(255,255,255,0.1)',
+                                background: currentPlayer?.is_ready ? 'rgba(46, 242, 160, 0.2)' : 'rgba(255, 255, 255, 0.04)'
+                                ,
+                                color: currentPlayer?.is_ready ? 'white' : 'var(--text-muted)', fontWeight: 700
+                            }}
+                        >
+                            {currentPlayer?.is_ready ? 'READY!' : hasImported ? 'CLICK TO READY UP' : 'SKIP IMPORT / READY'}
+                        </button>
+                    )}
+                </div>
+
+                {!isHost && (
+                    <div style={{ textAlign: 'center', marginTop: '16px', color: 'var(--text-muted)' }}>
+                        {currentPlayer?.is_ready ? 'Waiting for host...' : 'Import songs or click Ready to skip.'}
+                    </div>
+                )}
             </div>
         </div>
     )

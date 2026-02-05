@@ -27,9 +27,9 @@ async function resolveAudio(metadataList: any[]) {
 
             if (itunesData.results?.length > 0) {
                 const match = itunesData.results.find((res: any) => {
-                    // Simple lax match
-                    return res.artistName.toLowerCase().includes(meta.artist.toLowerCase()) ||
-                        meta.artist.toLowerCase().includes(res.artistName.toLowerCase())
+                    const artistOk = isMatch(meta.artist, res.artistName, true)
+                    const titleOk = isMatch(meta.name, res.trackName, false)
+                    return artistOk && titleOk
                 })
 
                 if (match && match.previewUrl) {

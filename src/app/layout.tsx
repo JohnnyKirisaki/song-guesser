@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { UserProvider } from '@/context/UserContext'
+import { VolumeProvider } from '@/context/VolumeContext'
+import VolumeSlider from '@/components/VolumeSlider'
 
 export const metadata: Metadata = {
   title: 'BeatBattle',
@@ -16,7 +18,10 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <UserProvider>
-          {children}
+          <VolumeProvider>
+            {children}
+            <VolumeSlider />
+          </VolumeProvider>
         </UserProvider>
       </body>
     </html>

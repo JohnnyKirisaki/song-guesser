@@ -1,12 +1,41 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import { Trophy, Clock, Zap, Music } from 'lucide-react'
+import { Clock, Zap, Music } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { soundManager } from '@/lib/sounds'
-import Podium from './Podium'
 import { useUser } from '@/context/UserContext'
+import { db } from '@/lib/firebase'
+import { ref, get, remove } from 'firebase/database'
+
+type Player = {
+    id: string
+    username: string
+    avatar_url: string
+    score: number
+    sudden_death_score?: number
+}
+
+type RoundGuess = {
+    user_id: string
+    username: string
+    avatar_url: string
+    guess_title: string
+    guess_artist: string
+    correct_title: boolean
+    correct_artist: boolean
+    is_correct: boolean
+    points: number
+    time_taken: number
+}
+
+type RoundHistory = {
+    song_id: string
+    track_name: string
+    artist_name: string
+    cover_url?: string
+    guesses: RoundGuess[]
+}
 
 type StatItem = {
     label: string
@@ -16,119 +45,170 @@ type StatItem = {
     color: string
 }
 
-export default function GameRecap({ roomCode, players }: { roomCode: string, players: any[] }) {
+export default function GameRecap({ roomCode, players }: { roomCode: string, players: Player[] }) {
     const router = useRouter()
     const { profile, updateProfile } = useUser()
     const [stats, setStats] = useState<StatItem[]>([])
     const [loading, setLoading] = useState(true)
-    const [winner, setWinner] = useState<any>(null)
+    const [winner, setWinner] = useState<Player | null>(null)
+    const [isDraw, setIsDraw] = useState(false)
+    const [drawPlayers, setDrawPlayers] = useState<Player[]>([])
 
     useEffect(() => {
         soundManager.play('win')
+    }, [])
+
+    useEffect(() => {
         const fetchStats = async () => {
-            // 1. Fetch Guesses
-            const { data: guesses } = await supabase
-                .from('room_guesses')
-                .select(`
-                    *,
-                    song:room_songs(track_name, artist_name, cover_url)
-                `)
-                .eq('room_code', roomCode)
+            const fallbackStats: StatItem[] = [
+                { label: 'Most Guessed', value: 'Not enough data', icon: Music, color: '#1ed760' },
+                { label: 'Hardest Song', value: 'Not enough data', icon: Zap, color: '#e91429' },
+                { label: 'Fastest Guess', value: 'Not enough data', icon: Clock, color: '#3b82f6' }
+            ]
 
-            if (!guesses || guesses.length === 0) {
-                setLoading(false)
-                return
-            }
-
-            // 2. Calculate Most Guessed Song
-            const songCounts: Record<string, { count: number, song: any }> = {}
-            guesses.filter(g => g.is_correct).forEach(g => {
-                if (!songCounts[g.song_id]) {
-                    songCounts[g.song_id] = { count: 0, song: g.song }
+            try {
+                const snapshot = await get(ref(db, `rooms/${roomCode}/round_history`))
+                if (!snapshot.exists()) {
+                    setStats(fallbackStats)
+                    setLoading(false)
+                    return
                 }
-                songCounts[g.song_id].count++
-            })
 
-            const sortedSongs = Object.values(songCounts).sort((a, b) => b.count - a.count)
-            const mostGuessed = sortedSongs[0]
+                const history = Object.values(snapshot.val() || {}) as RoundHistory[]
+                if (!history.length) {
+                    setStats(fallbackStats)
+                    setLoading(false)
+                    return
+                }
 
-            // 3. Calculate Hardest Song (Lowest correct %)
-            const songAttempts: Record<string, { total: number, correct: number, song: any }> = {}
-            guesses.forEach(g => {
-                if (!songAttempts[g.song_id]) songAttempts[g.song_id] = { total: 0, correct: 0, song: g.song }
-                songAttempts[g.song_id].total++
-                if (g.is_correct) songAttempts[g.song_id].correct++
-            })
+                // 1. Most guessed song
+                const songCounts: Record<string, { count: number, song: RoundHistory }> = {}
+                // 2. Hardest song (lowest correct %)
+                const songAttempts: Record<string, { total: number, correct: number, song: RoundHistory }> = {}
 
-            let hardestSong: any = null
-            let lowestRate = 1.1
+                let fastestGuess: { guess: RoundGuess, song: RoundHistory } | null = null
 
-            Object.values(songAttempts).forEach(item => {
-                if (item.total > 0) {
+                history.forEach(round => {
+                    const guesses = round.guesses || []
+                    const correctGuesses = guesses.filter(g => g.is_correct)
+                    const key = round.song_id || `${round.track_name}-${round.artist_name}`
+
+                    if (!songCounts[key]) songCounts[key] = { count: 0, song: round }
+                    songCounts[key].count += correctGuesses.length
+
+                    if (!songAttempts[key]) songAttempts[key] = { total: 0, correct: 0, song: round }
+                    songAttempts[key].total += guesses.length
+                    songAttempts[key].correct += correctGuesses.length
+
+                    correctGuesses.forEach(g => {
+                        if (!fastestGuess || g.time_taken < fastestGuess.guess.time_taken) {
+                            fastestGuess = { guess: g, song: round }
+                        }
+                    })
+                })
+
+                const mostGuessed = Object.values(songCounts).sort((a, b) => b.count - a.count)[0]
+
+                let hardestSong: { total: number, correct: number, song: RoundHistory } | null = null
+                Object.values(songAttempts).forEach(item => {
+                    if (item.total === 0) return
                     const rate = item.correct / item.total
-                    if (rate < lowestRate) {
-                        lowestRate = rate
+                    if (!hardestSong) {
                         hardestSong = item
+                        return
                     }
+                    const currentRate = hardestSong.correct / hardestSong.total
+                    if (rate < currentRate) hardestSong = item
+                })
+
+                const newStats: StatItem[] = []
+
+                if (mostGuessed) {
+                    newStats.push({
+                        label: 'Most Guessed',
+                        value: mostGuessed.song.track_name,
+                        subValue: `${mostGuessed.count} correct guesses`,
+                        icon: Music,
+                        color: '#1ed760'
+                    })
                 }
-            })
 
-            // 4. Fastest Guess
-            // Filter correct guesses, sort by time_taken (asc)
-            // Wait, time_taken is calculated as (Limit - Remaining). So smaller is faster.
-            const correctGuesses = guesses.filter(g => g.is_correct).sort((a, b) => a.time_taken - b.time_taken)
-            const fastest = correctGuesses[0]
-            const fastestPlayer = players.find(p => p.user_id === fastest?.user_id)
+                if (hardestSong) {
+                    newStats.push({
+                        label: 'Hardest Song',
+                        value: hardestSong.song.track_name,
+                        subValue: `${Math.round((hardestSong.correct / hardestSong.total) * 100)}% accuracy`,
+                        icon: Zap,
+                        color: '#e91429'
+                    })
+                }
 
-            // Compile Stats
-            const newStats: StatItem[] = []
+                if (fastestGuess) {
+                    newStats.push({
+                        label: 'Fastest Guess',
+                        value: fastestGuess.guess.username,
+                        subValue: `${fastestGuess.song.track_name} in ${fastestGuess.guess.time_taken.toFixed(1)} s`,
+                        icon: Clock,
+                        color: '#3b82f6'
+                    })
+                }
 
-            if (mostGuessed) {
-                newStats.push({
-                    label: 'Crowd Favorite',
-                    value: mostGuessed.song.track_name,
-                    subValue: `${mostGuessed.count} correct guesses`,
-                    icon: Music,
-                    color: '#1ed760'
+                const mergedStats = fallbackStats.map(fallback => {
+                    const existing = newStats.find(stat => stat.label === fallback.label)
+                    return existing || fallback
                 })
+
+                setStats(mergedStats)
+                setLoading(false)
+            } catch (e) {
+                console.error('Failed to fetch recap stats', e)
+                setStats([
+                    { label: 'Most Guessed', value: 'Not enough data', icon: Music, color: '#1ed760' },
+                    { label: 'Hardest Song', value: 'Not enough data', icon: Zap, color: '#e91429' },
+                    { label: 'Fastest Guess', value: 'Not enough data', icon: Clock, color: '#3b82f6' }
+                ])
+                setLoading(false)
             }
-
-            if (hardestSong) {
-                newStats.push({
-                    label: 'The Stump-er',
-                    value: hardestSong.song.track_name,
-                    subValue: `${Math.round((hardestSong.correct / hardestSong.total) * 100)}% accuracy`,
-                    icon: Zap,
-                    color: '#e91429'
-                })
-            }
-
-            if (fastest && fastestPlayer) {
-                newStats.push({
-                    label: 'Speed Demon',
-                    value: fastestPlayer.profile.username,
-                    subValue: `${fastest.song.track_name} in ${fastest.time_taken} s`,
-                    icon: Clock,
-                    color: '#3b82f6'
-                })
-            }
-
-            setStats(newStats)
-            setLoading(false)
-
-            // Determine Winner
-            const sortedPlayers = [...players].sort((a, b) => b.score - a.score)
-            setWinner(sortedPlayers[0])
         }
 
         fetchStats()
+    }, [roomCode])
+
+    useEffect(() => {
+        const fetchDraw = async () => {
+            try {
+                const gsSnap = await get(ref(db, `rooms/${roomCode}/game_state`))
+                if (!gsSnap.exists()) return
+                const gs = gsSnap.val()
+                const draw = !!gs?.draw
+                const ids = Array.isArray(gs?.draw_player_ids) ? gs.draw_player_ids : []
+                setIsDraw(draw && ids.length > 1)
+                if (ids.length > 1) {
+                    setDrawPlayers(players.filter(p => ids.includes(p.id)))
+                }
+            } catch (e) {
+                console.warn('Failed to read draw state', e)
+            }
+        }
+
+        fetchDraw()
     }, [roomCode, players])
 
     useEffect(() => {
-        if (!winner || !profile) return
-        if (winner.user_id !== profile.id) return
+        if (!players || players.length === 0) return
+        const sortedPlayers = [...players].sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score
+            return (b.sudden_death_score || 0) - (a.sudden_death_score || 0)
+        })
+        setWinner(sortedPlayers[0] || null)
+    }, [players])
 
-        const awardKey = `song_guesser_win_awarded_${roomCode}_${profile.id} `
+    useEffect(() => {
+        if (!winner || !profile) return
+        if (isDraw) return
+        if (winner.id !== profile.id) return
+
+        const awardKey = `song_guesser_win_awarded_${roomCode}_${profile.id}`
         if (typeof window !== 'undefined' && localStorage.getItem(awardKey) === '1') return
 
         const awardWin = async () => {
@@ -141,39 +221,84 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
         awardWin()
     }, [winner, profile, roomCode, updateProfile])
 
-    // Cleanup: Delete room after game finishes (with delay for viewing recap)
+    // Cleanup: Delete room after game finishes (delay so players can view recap)
     useEffect(() => {
         const cleanupTimer = setTimeout(async () => {
-            // Delete in reverse FK order: guesses → songs → players → room
-            await supabase.from('room_guesses').delete().eq('room_code', roomCode)
-            await supabase.from('room_songs').delete().eq('room_code', roomCode)
-            await supabase.from('room_players').delete().eq('room_code', roomCode)
-            await supabase.from('rooms').delete().eq('code', roomCode)
-
-            }, 30000) // 30 seconds delay
+            try {
+                await remove(ref(db, `rooms/${roomCode}`))
+            } catch (e) {
+                console.warn('[GameRecap] Failed to delete room:', e)
+            }
+        }, 30000) // 30 seconds delay
 
         return () => clearTimeout(cleanupTimer)
     }, [roomCode])
+
+    if (loading) return <div className="flex-center" style={{ height: '100vh', color: 'white' }}>Building recap...</div>
+
+    const sortedPlayers = [...players].sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score
+        return (b.sudden_death_score || 0) - (a.sudden_death_score || 0)
+    })
+    const winners = sortedPlayers.slice(0, 3)
 
     return (
         <div className="container flex-center" style={{ minHeight: '100vh', flexDirection: 'column', paddingTop: '40px', paddingBottom: '40px' }}>
             <h1 className="text-gradient" style={{ fontSize: '3rem', marginBottom: '8px' }}>Game Over</h1>
             <p style={{ color: '#aaa', marginBottom: '40px' }}>What a session! Here are the highlights.</p>
 
-            {/* Winner */}
-            {winner && (
-                <div className="animate-in" style={{ marginBottom: '48px', textAlign: 'center' }}>
-                    <div style={{ position: 'relative', display: 'inline-block' }}>
-                        <img
-                            src={winner.profile.avatar_url}
-                            style={{ width: '120px', height: '120px', borderRadius: '50%', border: '4px solid #ffd700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.4)' }}
-                        />
-                        <div style={{ position: 'absolute', top: -20, left: '50%', transform: 'translateX(-50%)', background: '#ffd700', color: 'black', padding: '4px 12px', borderRadius: '20px', fontWeight: 'bold' }}>
-                            WINNER
-                        </div>
+            {/* Podium / Draw */}
+            {isDraw && drawPlayers.length > 1 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', marginBottom: '48px' }}>
+                    <div style={{ fontWeight: 800, letterSpacing: '2px' }}>DRAW</div>
+                    <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                        {drawPlayers.map(p => (
+                            <div key={p.id} className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '200px', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)' }}>
+                                <div style={{ width: '90px', height: '90px', borderRadius: '50%', overflow: 'hidden', border: '3px solid #FFD700', marginBottom: '12px' }}>
+                                    <img src={p.avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                </div>
+                                <h2 style={{ marginBottom: '8px' }}>{p.username}</h2>
+                                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#FFD700' }}>{p.score} pts</div>
+                            </div>
+                        ))}
                     </div>
-                    <h2 style={{ fontSize: '2rem', marginTop: '16px' }}>{winner.profile.username}</h2>
-                    <p style={{ fontSize: '1.2rem', color: '#ffd700' }}>{winner.score} pts</p>
+                </div>
+            ) : (
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '48px' }}>
+                    {winners[1] && (
+                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '250px', justifyContent: 'flex-end', animationDelay: '200ms' }}>
+                            <div style={{ width: '80px', height: '80px', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '12px' }}>
+                                <img src={winners[1].avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+                            <h2 style={{ marginBottom: '8px' }}>{winners[1].username}</h2>
+                            <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{winners[1].score} pts</div>
+                            <div style={{ marginTop: '12px', color: 'silver' }}>2nd</div>
+                        </div>
+                    )}
+
+                    {winners[0] && (
+                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '350px', justifyContent: 'flex-end', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)', order: -1, zIndex: 10 }}>
+                            <div style={{ width: '120px', height: '120px', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '16px' }}>
+                                <img src={winners[0].avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+                            <div style={{ background: '#FFD700', color: 'black', padding: '4px 12px', borderRadius: '20px', fontWeight: 'bold', marginBottom: '16px' }}>
+                                WINNER
+                            </div>
+                            <h1 style={{ marginBottom: '8px', fontSize: '2rem' }}>{winners[0].username}</h1>
+                            <div style={{ fontSize: '2rem', fontWeight: 900, color: '#FFD700' }}>{winners[0].score} pts</div>
+                        </div>
+                    )}
+
+                    {winners[2] && (
+                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '200px', justifyContent: 'flex-end', animationDelay: '400ms' }}>
+                            <div style={{ width: '70px', height: '70px', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '12px' }}>
+                                <img src={winners[2].avatar_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+                            <h2 style={{ marginBottom: '8px' }}>{winners[2].username}</h2>
+                            <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{winners[2].score} pts</div>
+                            <div style={{ marginTop: '12px', color: '#CD7F32' }}>3rd</div>
+                        </div>
+                    )}
                 </div>
             )}
 

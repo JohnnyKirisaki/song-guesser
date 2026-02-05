@@ -1,0 +1,59 @@
+# AMQ-Style Lobby System Architecture
+
+This document explains the design and functionality of the new Lobby system, modeled after Anime Music Quiz (AMQ).
+
+## 1. Core Philosophy: "Room as a State Machine"
+Unlike a simple message group, an AMQ-style lobby is a synchronized state machine where every action (Join, Ready, Settings Change) is instantly reflected to all connected clients.
+
+## 2. Key Features
+
+### A. Realtime Presence (The "Online" Dot)
+- **What it is:** A live indicator showing if a player is actually connected.
+- **How it works:** We use Supabase Realtime Presence channels.
+    - **Online (Green):** The user's browser has an active WebSocket connection.
+    - **Offline (Yellow/Grey):** The user is in the DB list but has disconnected (closed tab/internet loss).
+- **Benefit:** You never have to ask "Are you there?" The UI tells you.
+
+### B. Host Authority
+- **The Crown:** The room creator is marked with a Crown icon.
+- **Privileges:**
+    - **Kick Players:** The host can remove unwanted players (X button).
+    - **Settings Control:** Only the host can change Rounds, Time, or Game Mode. Inputs are disabled for others.
+    - **Start Game:** Only the host can trigger the game start.
+
+### C. Live Slots & Grid Layout
+- **Visuals:** Players are displayed in a response grid, not a list.
+- **States:**
+    - **Border Color:** Indicates "Ready" status (Primary Color = Ready, Transparent = Not Ready).
+    - **Opacity:** Offline players fade out.
+
+### D. Synchronization
+- **Settings Sync:** When the host drags a slider, it updates in real-time for everyone.
+- **Game Start:** When the host clicks Start, everyone is navigated to the game page automatically.
+
+## 3. Technical Implementation
+
+### Database (PostgreSQL + RLS)
+We rely on Row Level Security (RLS) to enforce rules:
+- **`public.rooms`**: Stores settings and host_id.
+- **`public.room_players`**: The roster.
+- **Policies:**
+    - Users can only DELETE (leave) their *own* row.
+    - The *Host* can DELETE (kick) *any* row in their room.
+
+### Client (React + Supabase Realtime)
+- **Channel:** `room_lobby_[code]`
+- **Listeners:**
+    - `postgres_changes`: Listens for INSERT/UPDATE/DELETE on the players table.
+    - `presence`: Tracks WebSocket connections.
+
+## 4. User Flow
+1. **Join:** User enters code -> Validated -> Inserted into DB -> Subscribed to channel.
+2. **Ready Up:** User imports playlist -> `is_ready` flag set to true -> UI updates for all.
+3. **Game Loop:** Host clicks Start -> DB state changes to 'playing' -> All clients redirect to Game Page.
+
+## 5. Why "Delete Room"?
+To keep the AMQ feel (clean slate), when a game ends or the host leaves, we clean up.
+- **Lobby Phase:** If Host leaves, we currently close the room to prevent "zombie" rooms.
+- **Game End:** After the podium screen, the room is deleted after 30 seconds to save space and ensuring privacy.
+- Also add button to delete room in the lobby

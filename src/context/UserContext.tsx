@@ -1,148 +1,125 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import { User, Session } from '@supabase/supabase-js'
+import React, { createContext, useContext, useEffect, useState } from 'react'
+import { auth, db } from '@/lib/firebase'
+import { signInAnonymously, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth'
+import { ref, update, get } from 'firebase/database'
 
-type Profile = {
+type UserProfile = {
     id: string
     username: string
     avatar_url: string
-    wins: number
+    wins?: number
 }
 
 type UserContextType = {
-    user: User | null
-    profile: Profile | null
+    user: FirebaseUser | null
+    profile: UserProfile | null
     isLoading: boolean
     signIn: (username: string, avatarUrl: string) => Promise<void>
-    updateProfile: (data: Partial<Profile>) => Promise<void>
+    updateProfile: (updates: Partial<UserProfile>) => Promise<void>
+    signOut: () => Promise<void>
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined)
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-    const [user, setUser] = useState<User | null>(null)
-    const [profile, setProfile] = useState<Profile | null>(null)
+    const [user, setUser] = useState<FirebaseUser | null>(null)
+    const [profile, setProfile] = useState<UserProfile | null>(null)
     const [isLoading, setIsLoading] = useState(true)
 
     useEffect(() => {
-        let mounted = true
+        // Listen for auth state changes
+        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+            setUser(currentUser)
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-            if (!mounted) return
-
-            try {
-                if (session?.user) {
-                    setUser(session.user)
-                    const success = await fetchProfile(session.user.id)
-                    if (!success && event === 'SIGNED_IN') {
-                        // If we signed in but profile fetch failed, we might be in a bad state
-                        console.warn('[UserContext] Profile fetch failed on sign in')
+            if (currentUser) {
+                // Fetch Profile from RTDB
+                const profileRef = ref(db, `profiles/${currentUser.uid}`)
+                try {
+                const snapshot = await get(profileRef)
+                if (snapshot.exists()) {
+                        const data = snapshot.val()
+                        setProfile({
+                            ...data,
+                            wins: data.wins ?? 0
+                        })
+                    } else {
+                        // Profile doesn't exist yet (will be created in signIn)
+                        setProfile(null)
                     }
-                } else {
-                    setUser(null)
-                    setProfile(null)
+                } catch (e) {
+                    console.error("Error fetching profile:", e)
                 }
-            } catch (err) {
-                console.error('[UserContext] Error handling auth state change:', err)
-            } finally {
-                setIsLoading(false)
+            } else {
+                setProfile(null)
             }
+
+            setIsLoading(false)
         })
 
-        return () => {
-            mounted = false
-            subscription.unsubscribe()
-        }
+        return () => unsubscribe()
     }, [])
-
-    // Logic for duplicate handling or initial fetch is covered by onAuthStateChange which fires immediately with current session in Supabase v2
-    // But sometimes it doesn't fire INITIAL_SESSION reliably in all environments? 
-    // It is safer to trust the listener. We can do a manual check if we want, but usually listener is enough.
-    // If we want to be extra safe:
-
-    useEffect(() => {
-        // Just fail-safe in case listener doesn't fire for some reason (rare)
-        // or if it gets stuck in LOADING state
-        const check = async () => {
-            try {
-                const { data: { session } } = await supabase.auth.getSession()
-                if (!session) {
-                    setIsLoading(false)
-                } else {
-                    // If session exists but no profile after 5s, something is wrong
-                    setTimeout(() => {
-                        if (mounted) setIsLoading(false)
-                    }, 5000)
-                }
-            } catch (e) {
-                setIsLoading(false)
-            }
-        }
-        let mounted = true
-        check()
-        return () => { mounted = false }
-    }, [])
-
-    const fetchProfile = async (userId: string): Promise<boolean> => {
-        const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', userId)
-            .single()
-
-        if (error || !data) {
-            console.warn('[UserContext] Profile not found for user, clearing session.')
-            setProfile(null)
-            return false
-        }
-        setProfile(data)
-        return true
-    }
 
     const signIn = async (username: string, avatarUrl: string) => {
-        const normalizedUsername = username.toLowerCase().trim()
+        try {
+            setIsLoading(true)
+            let currentUser = auth.currentUser
 
-        // 1. Ensure we have an anonymous session first
-        // If we are already signed in, check if we need to sign in again?
-        // Actually, for "claim_profile" to work, we need an Auth ID.
-        // If we are not signed in, sign in anonymously.
-        let { data: { user } } = await supabase.auth.getUser()
+            if (!currentUser) {
+                const result = await signInAnonymously(auth)
+                currentUser = result.user
+            }
 
-        if (!user) {
-            const { data: authData, error: authError } = await supabase.auth.signInAnonymously()
-            if (authError) throw authError
-            if (!authData.user) throw new Error('No user created')
-            user = authData.user
+            const profileRef = ref(db, `profiles/${currentUser.uid}`)
+            const existingSnapshot = await get(profileRef)
+            const existingProfile = existingSnapshot.exists() ? existingSnapshot.val() : null
+
+            // Save Profile to Realtime Database
+            const profileData: UserProfile = {
+                id: currentUser.uid,
+                username,
+                avatar_url: avatarUrl,
+                wins: existingProfile?.wins ?? 0
+            }
+
+            await update(profileRef, profileData)
+
+            // Save Global Username Mapping (for persistence across sessions)
+            const slug = username.trim().toLowerCase()
+            if (slug) {
+                await update(ref(db, `usernames/${slug}`), {
+                    avatar_url: avatarUrl,
+                    original_name: username
+                })
+            }
+
+            setProfile(profileData)
+
+        } catch (error) {
+            console.error('Login error:', error)
+            throw error
+        } finally {
+            setIsLoading(false)
         }
-
-        // 2. Claim Profile via RPC
-        // This handles both "Create New" and "Reclaim Existing" logic safely with RLS
-        const { data: profileId, error: claimError } = await supabase.rpc('claim_profile', {
-            p_username: normalizedUsername,
-            p_avatar_url: avatarUrl || null
-        })
-
-        if (claimError) {
-            console.error('[UserContext] Claim error:', claimError)
-            throw claimError
-        }
-
-        // 3. Fetch the full profile data
-        await fetchProfile(profileId)
     }
 
-    const updateProfile = async (updates: Partial<Profile>) => {
-        if (!profile) return
-        const { error } = await supabase.from('profiles').update(updates).eq('id', profile.id)
-        if (!error) {
-            setProfile(prev => prev ? { ...prev, ...updates } : null)
-        }
+    const signOut = async () => {
+        await auth.signOut()
+        setProfile(null)
+        setUser(null)
+    }
+
+    const updateProfile = async (updates: Partial<UserProfile>) => {
+        const currentUser = auth.currentUser
+        if (!currentUser) return
+        const profileRef = ref(db, `profiles/${currentUser.uid}`)
+        await update(profileRef, updates)
+        setProfile(prev => prev ? { ...prev, ...updates } : prev)
     }
 
     return (
-        <UserContext.Provider value={{ user, profile, isLoading, signIn, updateProfile }}>
+        <UserContext.Provider value={{ user, profile, isLoading, signIn, updateProfile, signOut }}>
             {children}
         </UserContext.Provider>
     )

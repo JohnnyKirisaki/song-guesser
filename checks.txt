@@ -26,7 +26,7 @@ The screen when a game is playing should be the following:
 - After the time of guessing has elapsed, both the artist name and song name should be reviled on top of the vynil record. The vynil record than would be replaced with the album cover for that songs. The song will be played for 10 more seconds or until majority of players hits (skip final answer)
 - the end screen should display a podium of the top 3 users of that game using their images and names.
 - there should be 1v1 Sudden-death round if there’s a tie between 2 or more users independent of ranking so even if a user is last and second last but have the same points they shouldve a 1v1. For the 1v1, the algorithm should choose 2 more songs from each player and make them guess, the user that wins is the user that wins by 2 points, so we should fetch 2 more songs if they keep drawing. Before each sudden death a screen like Tekken VS. should be shown with both users, this will let the program fetch the new songs while this vs. screen is being shown.
--Emotes / reactions during rounds (🔥 😂 😭 🎧)
+- Emotes / reactions during rounds
 -“This was your song” reveal tag after each round
 -End-of-game recap:
 
@@ -54,3 +54,4 @@ Fastest guess
 - make sure the artist name is also cleaned up properly. if a user inputs "Kendrick Lamar" and the song is "Kendrick Lamar, Drake" the song should be accepted.
 - if the user chooses a playlist with more than 50 songs, we should fetch all of them.
 - make sure after every game is completed to delete the room from the database.
+

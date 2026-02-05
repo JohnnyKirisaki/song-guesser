@@ -1,0 +1,336 @@
+0) New target architecture (what “done” looks like)
+
+Client
+
+Accepts Spotify/YouTube/text input
+
+Calls your API to extract raw tracks
+
+Calls your API to resolve raw tracks → Deezer track IDs + preview URLs
+
+Never calls Deezer/iTunes directly
+
+Server
+
+Extracts playlist metadata (you already do this)
+
+Resolves tracks via Deezer server-to-server
+
+Rate limits + queues resolution
+
+Caches resolved results so imports are fast on repeat
+
+1) Stop doing resolution in the browser (CORS + bot protection)
+What to do
+
+Delete/disable client-side resolveTracksViaItunes() / any fetch(deezer...) from the client
+
+Add server endpoint: POST /api/resolve-tracks
+
+Why
+
+Deezer (and most preview providers) will intermittently CORS/403 if you hit them from browsers at scale
+
+Server calls are stable, debuggable, and you can throttle
+
+2) Use Deezer as the preview source (correct way)
+Endpoint you’ll use (server-side)
+
+Search: https://api.deezer.com/search?q=...
+
+Track details: https://api.deezer.com/track/{id} (optional)
+
+Deezer response includes preview (30s MP3 URL) when available
+
+Implementation requirements
+
+Build queries like:
+
+artist:"bbno$" track:"meant to be"
+
+fallback: "bbno$ meant to be"
+
+Do not fire 100 requests simultaneously.
+
+3) Add a concurrency limiter + retries (prevents dropped matches)
+What to do
+
+On the server resolver:
+
+Limit concurrency: 3–8 at a time
+
+Add retry with backoff for network errors (not for “no results”)
+
+Timeout each request (like 5–8 seconds)
+
+Result
+
+No more “random” failing tracks because of throttling/network flakiness
+
+4) Add caching (this is huge)
+Why
+
+The same Spotify playlists will be imported again and again. Resolving 100 tracks each time is wasteful.
+
+What to cache
+
+Store mapping like:
+
+Key: source=spotify trackId=... (best)
+Fallback key: normalize(artist)+"|"+normalize(title)+"|"+durationMs?
+
+Value:
+
+deezerTrackId
+
+previewUrl
+
+deezerArtist
+
+deezerTitle
+
+score
+
+resolvedAt
+
+Where
+
+In-memory LRU for dev
+
+Redis / Upstash Redis / Supabase KV / your DB for production
+
+5) IMPORTANT: stop “boolean matching”; switch to scoring
+
+Your current isMatch() returns true/false. That guarantees lots of false negatives and wrong picks.
+
+What to do
+
+Implement:
+
+scoreCandidate(rawTrack, deezerCandidate) -> number
+
+Pick the highest score above a threshold.
+
+Scoring factors (the full list)
+
+Title
+
+Exact normalized match: +40
+
+Token overlap / Jaccard: +10 to +30
+
+Levenshtein small distance: +0 to +15
+
+Artist
+
+Exact artist token match: +30
+
+Partial match (for multi-artist strings): +10 to +25
+
+Version correctness
+
+If Spotify title has no “remix/live/edit” tags but Deezer title has them: -35
+
+If Spotify title includes Remix/Live and Deezer matches same: +15
+
+Featured artists handling
+
+Features should not cause failure:
+
+If Deezer has “feat …” and Spotify doesn’t: small penalty, not rejection
+
+If Spotify explicitly has “with SZA”, treat as a positive if Deezer includes SZA
+
+Duration (if available from Spotify)
+
+If abs(diff) <= 2s: +25
+
+If abs(diff) <= 5s: +15
+
+If abs(diff) > 12s: -30
+Duration is the best way to avoid alternate versions.
+
+Popularity / ranking
+
+Deezer rank can be used as tie-breaker: +0 to +10
+(never let popularity override correctness)
+
+6) Fix normalization (your current normalize() breaks names)
+
+Your current normalize removes $, dots, accents, etc. That kills matches like bbno$, ROSÉ, Fred again.., LOVE., APT.
+
+What to do
+
+Create two normalizers:
+
+normalizeForSearch()
+
+minimal cleanup, keep characters, just trim spaces
+
+normalizeForCompare()
+
+remove accents
+
+map symbols before stripping
+
+$ → s (so bbno$ aligns with catalogs that treat $ as “s”)
+
+keep only [a-z0-9 ] at the end
+
+Also: don’t delete parentheticals blindly—extract them.
+
+7) Parse title into “main title” + “tags”
+
+Instead of:
+
+.replace(/\([^)]*\)/g, '')
+
+
+Do:
+
+Extract (feat...), (live), (remix), (radio edit) etc into a tag list
+
+Extract suffixes like - From "...", - Radio Mix, - Remastered into tags too
+
+Why
+
+Tags are useful for filtering OUT wrong versions
+
+But shouldn’t destroy the core title match
+
+8) Build a strict “anti-wrong-version” filter (without losing real tracks)
+Your rule
+
+“I want the Spotify songs to really be the ones to play, not remixes/alt/feat”
+
+You can’t guarantee “exact same recording” across catalogs 100%, but you can make it extremely accurate.
+
+What to do
+
+When Spotify track title does not contain any version tag:
+
+reject/penalize Deezer candidates containing:
+
+remix, live, acoustic, edit, remaster, sped up, slowed, instrumental, karaoke, cover, demo, extended, mix
+
+Also penalize soundtrack versions unless Spotify indicates soundtrack
+
+When Spotify track title DOES contain such tags:
+
+require Deezer candidate to match at least one of those tags
+
+9) Fix “can’t find bbno$ - ADD / meant to be”
+
+This typically happens because:
+
+$ removed → query becomes wrong
+
+Deezer search might not like your query formatting
+
+Your strict matcher rejects “feat/clean title variants”
+
+Sometimes Spotify title includes punctuation that Deezer formats differently
+
+What to do (for hard cases)
+
+Resolver fallbacks in this order:
+
+Query: artist:"bbno$" track:"meant to be"
+
+Query: "bbno$ meant to be"
+
+Query with symbol-mapped artist: bbnos
+
+Title-only query: "meant to be" then filter by artist match
+
+If still nothing: use a “looser match threshold” for that one track
+
+And log the failure reason:
+
+“no search results”
+
+“results exist but all penalized for version mismatch”
+
+“artist mismatch”
+This is key to iterating.
+
+10) Add structured logging + a resolver report
+
+Right now you only log “No verified match”.
+
+What to do
+
+Return a report per track:
+
+input: artist/title/duration
+
+query used
+
+top 5 candidates with scores + reasons
+
+final pick or rejection reason
+
+This makes debugging 100x faster.
+
+11) Return stable objects to the client
+
+Instead of returning only previewUrl, return:
+
+{
+  input: { artist, title, durationMs?, sourceId? },
+  resolved: boolean,
+  deezer: {
+    id,
+    title,
+    artist,
+    previewUrl,
+    duration,
+    link
+  },
+  score,
+  reasonIfFailed
+}
+
+
+Client can show:
+
+✅ matched tracks
+
+⚠️ questionable matches (score barely above threshold)
+
+❌ failed tracks (with reason)
+
+12) Add DB persistence so “wins count” and user data don’t depend on provider
+
+Unrelated but important for your game flow:
+
+Store your own canonical “Track” objects keyed by source/spotifyId
+
+The provider (Deezer preview) is just a playback field you can swap later
+
+13) Add a safety fallback provider (optional but recommended)
+
+Deezer is good, but previews can be missing for some tracks.
+Fallback options:
+
+iTunes (server-side only)
+
+Spotify preview_url (if you have official API access; many tracks have null previews nowadays)
+
+Plan:
+
+Resolve Deezer first
+
+If missing preview, try iTunes (server-side)
+
+Cache whichever works
+
+14) Security + abuse prevention (important for public rooms)
+
+Because users can paste arbitrary playlists:
+
+Add server-side request limits per IP / per room
+
+Max tracks per import (e.g. 200)
+
+Queue resolves so one troll doesn’t DDOS your API
