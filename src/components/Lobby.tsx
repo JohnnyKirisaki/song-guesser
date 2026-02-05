@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, remove } from 'firebase/database'
@@ -16,6 +16,7 @@ type Player = {
     is_ready: boolean
     is_host: boolean
     is_importing?: boolean
+    import_progress?: number
 }
 
 type RoomSettings = {
@@ -40,6 +41,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     const [importing, setImporting] = useState(false)
     const [importProgress, setImportProgress] = useState(0)
     const [allSongs, setAllSongs] = useState<any[]>([])
+    const lastProgressRef = useRef(0)
 
     // Derived
     const currentPlayer = players.find(p => p.id === profile?.id)
@@ -114,26 +116,32 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         try {
             setImporting(true)
             setImportProgress(0)
+            lastProgressRef.current = 0
 
             // Mark as importing in DB
-            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true })
+            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true, import_progress: 0 })
 
             const tracks = await fetchSpotifyData(importUrl, (value) => {
                 const clamped = Math.min(100, Math.max(0, Math.round(value)))
                 setImportProgress(clamped)
+                const shouldUpdate = clamped === 100 || clamped - lastProgressRef.current >= 3
+                if (shouldUpdate) {
+                    lastProgressRef.current = clamped
+                    void update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { import_progress: clamped })
+                }
             })
             await addSongsToRoom(roomCode, profile.id, tracks)
             setImportUrl('')
 
             // Auto-Ready & Finished Importing
             const playerRef = ref(db, `rooms/${roomCode}/players/${profile.id}`)
-            await update(playerRef, { is_ready: true, is_importing: false })
+            await update(playerRef, { is_ready: true, is_importing: false, import_progress: 100 })
 
         } catch (error: any) {
             console.error(error)
             alert(error.message || 'Failed to import playlist')
             // Reset importing flag on error
-            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: false })
+            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: false, import_progress: 0 })
         } finally {
             setImporting(false)
             setImportProgress(0)
@@ -265,8 +273,21 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                 <div>
                                     <div style={{ fontWeight: 700 }}>{p.username}</div>
                                     <div style={{ fontSize: '0.8rem', color: p.is_ready ? 'var(--primary)' : 'var(--text-muted)' }}>
-                                        {p.is_ready ? 'READY' : 'NOT READY'}
+                                        {p.is_importing
+                                            ? `IMPORTING ${Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))}%`
+                                            : (p.is_ready ? 'READY' : 'NOT READY')}
                                     </div>
+                                    {p.is_importing && (
+                                        <div style={{
+                                            marginTop: '6px', height: '6px', width: '140px',
+                                            background: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden'
+                                        }}>
+                                            <div style={{
+                                                height: '100%', width: `${Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))}%`,
+                                                background: 'linear-gradient(90deg, rgba(46, 242, 160, 0.9), rgba(60, 184, 255, 0.9))'
+                                            }} />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                             {isHost && p.id !== hostId && (
