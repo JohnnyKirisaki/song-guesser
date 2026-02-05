@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
         // 2. Get Access Token (Client Credentials Flow)
         const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
-        const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+        const tokenRes: Response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: {
                 'Authorization': `Basic ${auth}`,
@@ -73,22 +73,22 @@ export async function POST(request: Request) {
             let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${resourceId}/tracks?limit=50`
 
             while (nextUrl && allItems.length < 500) {
-                const res = await fetch(nextUrl, {
+                const playlistRes: Response = await fetch(nextUrl, {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 })
 
-                if (!res.ok) {
+                if (!playlistRes.ok) {
                     if (allItems.length === 0) {
-                        const err = await res.text()
-                        console.error('[API] Playlist Fetch Failed:', { status: res.status, statusText: res.statusText, body: err })
+                        const err = await playlistRes.text()
+                        console.error('[API] Playlist Fetch Failed:', { status: playlistRes.status, statusText: playlistRes.statusText, body: err })
                         return NextResponse.json({
-                            error: `Failed to fetch playlist (HTTP ${res.status}). ${res.status === 404 ? 'Playlist not found or private.' : res.status === 403 ? 'Access forbidden - playlist may be region-restricted.' : 'Check if the URL is correct.'}`
+                            error: `Failed to fetch playlist (HTTP ${playlistRes.status}). ${playlistRes.status === 404 ? 'Playlist not found or private.' : playlistRes.status === 403 ? 'Access forbidden - playlist may be region-restricted.' : 'Check if the URL is correct.'}`
                         }, { status: 500 })
                     }
                     break
                 }
 
-                const pageData = await res.json()
+                const pageData: any = await playlistRes.json()
                 if (!pageData.items) break
 
                 allItems.push(...pageData.items)
@@ -98,7 +98,7 @@ export async function POST(request: Request) {
         else if (urlType === 'artist') {
             // Fetch Artist's Top Tracks + Albums
             // First get top tracks (usually 10)
-            const topTracksRes = await fetch(
+            const topTracksRes: Response = await fetch(
                 `https://api.spotify.com/v1/artists/${resourceId}/top-tracks?market=US`,
                 { headers: { 'Authorization': `Bearer ${accessToken}` } }
             )
@@ -113,13 +113,13 @@ export async function POST(request: Request) {
             const albums: any[] = []
 
             while (nextUrl && albums.length < 50) {
-                const albumsRes = await fetch(nextUrl, {
+                const albumsRes: Response = await fetch(nextUrl, {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 })
 
                 if (!albumsRes.ok) break
 
-                const albumsData = await albumsRes.json()
+                const albumsData: any = await albumsRes.json()
                 if (!albumsData.items) break
 
                 albums.push(...albumsData.items)
@@ -128,13 +128,13 @@ export async function POST(request: Request) {
 
             // Fetch tracks from each album
             for (const album of albums.slice(0, 20)) { // Limit to 20 albums to prevent timeout
-                const albumTracksRes = await fetch(
+                const albumTracksRes: Response = await fetch(
                     `https://api.spotify.com/v1/albums/${album.id}/tracks?limit=50`,
                     { headers: { 'Authorization': `Bearer ${accessToken}` } }
                 )
 
                 if (albumTracksRes.ok) {
-                    const tracksData = await albumTracksRes.json()
+                    const tracksData: any = await albumTracksRes.json()
                     const trackItems = tracksData.items?.map((t: any) => ({
                         track: { ...t, artists: t.artists || album.artists }
                     })) || []
@@ -149,13 +149,13 @@ export async function POST(request: Request) {
             let nextUrl: string | null = `https://api.spotify.com/v1/albums/${resourceId}/tracks?limit=50`
 
             while (nextUrl && allItems.length < 500) {
-                const res = await fetch(nextUrl, {
+                const albumRes: Response = await fetch(nextUrl, {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 })
 
-                if (!res.ok) {
+                if (!albumRes.ok) {
                     if (allItems.length === 0) {
-                        const err = await res.text()
+                        const err = await albumRes.text()
                         console.error('[API] Album Fetch Failed:', err)
                         return NextResponse.json({
                             error: 'Failed to fetch album. It might not exist or the ID is wrong.'
@@ -164,11 +164,11 @@ export async function POST(request: Request) {
                     break
                 }
 
-                const pageData = await res.json()
+                const pageData: any = await albumRes.json()
                 if (!pageData.items) break
 
                 // Album tracks don't have the full structure, need to get album info for artist
-                const albumInfoRes = await fetch(
+                const albumInfoRes: Response = await fetch(
                     `https://api.spotify.com/v1/albums/${resourceId}`,
                     { headers: { 'Authorization': `Bearer ${accessToken}` } }
                 )

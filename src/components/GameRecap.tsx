@@ -88,7 +88,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                 let fastestGuess: { guess: RoundGuess, song: RoundHistory } | null = null
 
-                history.forEach(round => {
+                for (const round of history) {
                     const guesses = round.guesses || []
                     const correctGuesses = guesses.filter(g => g.is_correct)
                     const key = round.song_id || `${round.track_name}-${round.artist_name}`
@@ -100,26 +100,26 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     songAttempts[key].total += guesses.length
                     songAttempts[key].correct += correctGuesses.length
 
-                    correctGuesses.forEach(g => {
-                        if (!fastestGuess || g.time_taken < fastestGuess.guess.time_taken) {
+                    for (const g of correctGuesses) {
+                        if (!fastestGuess || g.time_taken < (fastestGuess as any).guess.time_taken) {
                             fastestGuess = { guess: g, song: round }
                         }
-                    })
-                })
+                    }
+                }
 
                 const mostGuessed = Object.values(songCounts).sort((a, b) => b.count - a.count)[0]
 
                 let hardestSong: { total: number, correct: number, song: RoundHistory } | null = null
-                Object.values(songAttempts).forEach(item => {
-                    if (item.total === 0) return
+                for (const item of Object.values(songAttempts)) {
+                    if (item.total === 0) continue
                     const rate = item.correct / item.total
                     if (!hardestSong) {
                         hardestSong = item
-                        return
+                        continue
                     }
-                    const currentRate = hardestSong.correct / hardestSong.total
+                    const currentRate = (hardestSong as any).correct / (hardestSong as any).total
                     if (rate < currentRate) hardestSong = item
-                })
+                }
 
                 const newStats: StatItem[] = []
 
