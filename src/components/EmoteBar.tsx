@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { db } from '@/lib/firebase'
-import { ref, push, onChildAdded, off, serverTimestamp } from 'firebase/database'
+import { ref, push, onChildAdded, serverTimestamp } from 'firebase/database'
 
 type Reaction = {
     id: string
@@ -17,29 +17,40 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
 
     // Load available emotes from API
     useEffect(() => {
+        console.log('[EmoteBar] Mounted for room:', roomCode)
         fetch('/api/emotes')
             .then(res => res.json())
             .then(data => {
-                if (data.emotes) setEmotes(data.emotes)
+                if (data.emotes) {
+                    console.log('[EmoteBar] Loaded emotes:', data.emotes.length)
+                    setEmotes(data.emotes)
+                }
             })
-            .catch(err => console.error('Failed to load emotes:', err))
-    }, [])
+            .catch(err => console.error('[EmoteBar] Failed to load emotes:', err))
+    }, [roomCode])
 
     useEffect(() => {
+        if (!roomCode) return
+
         const reactionsRef = ref(db, `rooms/${roomCode}/reactions`)
         const startTime = Date.now()
+        console.log('[EmoteBar] Subscribing to reactions at', startTime)
 
         // Listen for new reactions added to the room
         const unsubscribe = onChildAdded(reactionsRef, (snapshot) => {
             const data = snapshot.val()
+            // console.log('[EmoteBar] Child added:', snapshot.key, data)
+
             // Only show reactions sent AFTER we joined/loaded
-            if (data && data.timestamp && data.timestamp > startTime) {
+            // We allow a small 1s buffer for clock skew
+            if (data && data.timestamp && data.timestamp > (startTime - 1000)) {
                 addReaction(data.src)
             }
         })
 
         return () => {
-            off(reactionsRef, 'child_added', unsubscribe)
+            console.log('[EmoteBar] Unsubscribing from reactions')
+            unsubscribe()
         }
     }, [roomCode])
 
@@ -57,19 +68,18 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
     }
 
     const sendEmote = async (src: string) => {
-        // We push to Firebase, and our own listener will catch it and show it locally
-        // Alternatively, show it locally instantly and then push
-        // Showing locally instantly feels snappier
+        console.log('[EmoteBar] Sending emote:', src)
+        // Show locally instantly for responsiveness
         addReaction(src)
 
         try {
             const reactionsRef = ref(db, `rooms/${roomCode}/reactions`)
             await push(reactionsRef, {
                 src,
-                timestamp: Date.now() // Using client side for simplicity in filtering
+                timestamp: Date.now() // Simple client timestamp for filtering
             })
         } catch (err) {
-            console.error('Failed to send emote:', err)
+            console.error('[EmoteBar] Failed to push emote:', err)
         }
     }
 
@@ -80,7 +90,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
                 position: 'fixed', right: '20px', top: '50%', transform: 'translateY(-50%)',
                 padding: '16px 8px', borderRadius: '50px', display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 100
             }}>
-                {emotes.length === 0 && <span style={{ color: '#888', fontSize: '0.8rem' }}>No custom emotes</span>}
+                {emotes.length === 0 && <span style={{ color: '#888', fontSize: '0.8rem', padding: '0 8px' }}>No emotes</span>}
 
                 {emotes.map(src => (
                     <button
@@ -100,7 +110,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
             </div>
 
             {/* Floating Reactions Layer */}
-            <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 99, overflow: 'hidden' }}>
+            <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 999, overflow: 'hidden' }}>
                 {reactions.map(r => (
                     <div
                         key={r.id}
