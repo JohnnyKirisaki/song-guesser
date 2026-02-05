@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { db } from '@/lib/firebase'
+import { ref, push, onChildAdded, off, serverTimestamp } from 'firebase/database'
 
 type Reaction = {
     id: string
@@ -25,16 +26,20 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
     }, [])
 
     useEffect(() => {
-        const channel = supabase.channel(`room_${roomCode}`)
+        const reactionsRef = ref(db, `rooms/${roomCode}/reactions`)
+        const startTime = Date.now()
 
-        channel
-            .on('broadcast', { event: 'emote' }, ({ payload }) => {
-                addReaction(payload.src)
-            })
-            .subscribe()
+        // Listen for new reactions added to the room
+        const unsubscribe = onChildAdded(reactionsRef, (snapshot) => {
+            const data = snapshot.val()
+            // Only show reactions sent AFTER we joined/loaded
+            if (data && data.timestamp && data.timestamp > startTime) {
+                addReaction(data.src)
+            }
+        })
 
         return () => {
-            supabase.removeChannel(channel)
+            off(reactionsRef, 'child_added', unsubscribe)
         }
     }, [roomCode])
 
@@ -52,15 +57,20 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
     }
 
     const sendEmote = async (src: string) => {
-        // Show locally instantly
+        // We push to Firebase, and our own listener will catch it and show it locally
+        // Alternatively, show it locally instantly and then push
+        // Showing locally instantly feels snappier
         addReaction(src)
 
-        // Broadcast to others
-        await supabase.channel(`room_${roomCode}`).send({
-            type: 'broadcast',
-            event: 'emote',
-            payload: { src }
-        })
+        try {
+            const reactionsRef = ref(db, `rooms/${roomCode}/reactions`)
+            await push(reactionsRef, {
+                src,
+                timestamp: Date.now() // Using client side for simplicity in filtering
+            })
+        } catch (err) {
+            console.error('Failed to send emote:', err)
+        }
     }
 
     return (
