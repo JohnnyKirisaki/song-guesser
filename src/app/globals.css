@@ -581,6 +581,13 @@ input:focus, textarea:focus, select:focus {
 
 .game-stage {
   width: 100%;
+  transform: translateY(-36px);
+}
+
+@media (max-width: 720px) {
+  .game-stage {
+    transform: translateY(-18px);
+  }
 }
 
 .lyrics-panel {
