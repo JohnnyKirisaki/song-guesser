@@ -397,8 +397,8 @@ export function calculateScore(
     } else if (mode === 'song_only') {
         if (correctTitle) points += 1
     } else if (mode === 'lyrics_only') {
-        if (correctTitle) points += TITLE_POINTS
-        if (correctArtist) points += ARTIST_POINTS
+        if (correctTitle) points += ARTIST_POINTS
+        if (correctArtist) points += TITLE_POINTS
     } else {
         // Normal
         if (correctTitle) points += TITLE_POINTS * timeMultiplier
