@@ -530,7 +530,7 @@ export default function GamePage() {
             groups[score].push(p)
         })
 
-        const scores = Object.keys(groups).map(Number).sort((a, b) => b - a)
+        const scores = Object.keys(groups).map(Number).sort((a, b) => a - b)
         for (const score of scores) {
             if (groups[score].length > 1) {
                 const groupIds = groups[score].map(p => p.id).sort()
@@ -696,7 +696,9 @@ export default function GamePage() {
         const updatedPlayers = currentPlayers.map(p => {
             const pointsEarned = roundPoints[p.id] || 0
             if (currentIsSuddenDeath) {
-                return { ...p, sudden_death_score: (p.sudden_death_score || 0) + pointsEarned, score: (p.score || 0) + pointsEarned }
+                // FIXED: Do NOT add to main score. Only update SD score.
+                // Keeping 'score' as-is ensures getFirstTieGroup uses the original main score tiers.
+                return { ...p, sudden_death_score: (p.sudden_death_score || 0) + pointsEarned }
             } else {
                 return { ...p, score: (p.score || 0) + pointsEarned }
             }
@@ -872,7 +874,7 @@ export default function GamePage() {
             </div>
 
             {/* Main Game Area */}
-            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', position: 'relative', overflow: 'hidden' }}>
+            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: '10vh', paddingBottom: '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: 'hidden' }}>
                 <div className="game-core">
                     {/* Album Cover Area (Hidden until Reveal, unless not lyrics mode) */}
                     {(!isLyricsOnly || isReveal) && (

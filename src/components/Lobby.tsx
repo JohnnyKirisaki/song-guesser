@@ -279,12 +279,14 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                     </div>
                                     {p.is_importing && (
                                         <div style={{
-                                            marginTop: '6px', height: '6px', width: '140px',
-                                            background: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden'
+                                            marginTop: '8px', height: '10px', width: '100%', maxWidth: '140px',
+                                            background: 'rgba(255,255,255,0.1)', borderRadius: '999px', overflow: 'hidden',
+                                            boxShadow: '0 0 10px rgba(46, 242, 160, 0.2)'
                                         }}>
                                             <div style={{
                                                 height: '100%', width: `${Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))}%`,
-                                                background: 'linear-gradient(90deg, rgba(46, 242, 160, 0.9), rgba(60, 184, 255, 0.9))'
+                                                background: 'linear-gradient(90deg, #2ef2a0, #3cb8ff)',
+                                                transition: 'width 0.3s ease-out'
                                             }} />
                                         </div>
                                     )}

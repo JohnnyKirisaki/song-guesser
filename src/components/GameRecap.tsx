@@ -61,20 +61,24 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     useEffect(() => {
         const fetchStats = async () => {
             const fallbackStats: StatItem[] = [
-                { label: 'Most Guessed', value: 'Not enough data', icon: Music, color: '#1ed760' },
-                { label: 'Hardest Song', value: 'Not enough data', icon: Zap, color: '#e91429' },
-                { label: 'Fastest Guess', value: 'Not enough data', icon: Clock, color: '#3b82f6' }
+                { label: 'Most Guessed', value: 'No valid answers', icon: Music, color: '#1ed760' },
+                { label: 'Hardest Song', value: 'No valid answers', icon: Zap, color: '#e91429' },
+                { label: 'Fastest Guess', value: 'No valid answers', icon: Clock, color: '#3b82f6' }
             ]
 
             try {
-                const snapshot = await get(ref(db, `rooms/${roomCode}/round_history`))
+                const snapshot = await get(ref(db, `rooms/${roomCode}`))
                 if (!snapshot.exists()) {
                     setStats(fallbackStats)
                     setLoading(false)
                     return
                 }
 
-                const history = Object.values(snapshot.val() || {}) as RoundHistory[]
+                const data = snapshot.val()
+                const history = Object.values(data.round_history || {}) as RoundHistory[]
+                const settings = data.settings || {}
+                const mode = settings.mode || 'normal'
+
                 if (!history.length) {
                     setStats(fallbackStats)
                     setLoading(false)
@@ -92,7 +96,15 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                 for (const round of history) {
                     const guesses = round.guesses || []
-                    const correctGuesses = guesses.filter(g => g.is_correct)
+
+                    // MODE-AWARE SCORING
+                    const correctGuesses = guesses.filter(g => {
+                        if (mode === 'artist_only') return g.correct_artist
+                        if (mode === 'song_only') return g.correct_title
+                        // Normal / Hardcore
+                        return g.correct_title && g.correct_artist
+                    })
+
                     const key = round.song_id || `${round.track_name}-${round.artist_name}`
 
                     if (!songCounts[key]) songCounts[key] = { count: 0, song: round }
@@ -125,11 +137,11 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                 const newStats: StatItem[] = []
 
-                if (mostGuessed) {
+                if (mostGuessed && mostGuessed.count > 0) {
                     newStats.push({
                         label: 'Most Guessed',
                         value: formatSong(mostGuessed.song),
-                        subValue: `${mostGuessed.count} correct guesses`,
+                        subValue: `${mostGuessed.count} correct guesses`, // Changed from 'perfect' to 'correct' to be generic
                         icon: Music,
                         color: '#1ed760'
                     })
@@ -165,9 +177,9 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
             } catch (e) {
                 console.error('Failed to fetch recap stats', e)
                 setStats([
-                    { label: 'Most Guessed', value: 'Not enough data', icon: Music, color: '#1ed760' },
-                    { label: 'Hardest Song', value: 'Not enough data', icon: Zap, color: '#e91429' },
-                    { label: 'Fastest Guess', value: 'Not enough data', icon: Clock, color: '#3b82f6' }
+                    { label: 'Most Guessed', value: 'No valid answers', icon: Music, color: '#1ed760' },
+                    { label: 'Hardest Song', value: 'No valid answers', icon: Zap, color: '#e91429' },
+                    { label: 'Fastest Guess', value: 'No valid answers', icon: Clock, color: '#3b82f6' }
                 ])
                 setLoading(false)
             }
@@ -249,7 +261,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     return (
         <div className="container flex-center" style={{ minHeight: '100vh', flexDirection: 'column', paddingTop: '40px', paddingBottom: '40px' }}>
             <h1 className="text-gradient" style={{ fontSize: '3rem', marginBottom: '8px' }}>Game Over</h1>
-            <p style={{ color: '#aaa', marginBottom: '40px' }}>What a session! Here are the highlights.</p>
+            <p style={{ color: '#aaa', marginBottom: '40px' }}>What a game! Here are the standings.</p>
 
             {/* Podium / Draw */}
             {isDraw && drawPlayers.length > 1 ? (
@@ -258,7 +270,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
                         {drawPlayers.map(p => (
                             <div key={p.id} className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '200px', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)' }}>
-                                <div style={{ width: '90px', height: '90px', borderRadius: '50%', overflow: 'hidden', border: '3px solid #FFD700', marginBottom: '12px' }}>
+                                <div style={{ width: '120px', height: '120px', minWidth: '120px', minHeight: '120px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #FFD700', marginBottom: '12px' }}>
                                     <img src={p.avatar_url} style={podiumAvatarStyle} />
                                 </div>
                                 <h2 style={{ marginBottom: '8px' }}>{p.username}</h2>
@@ -270,8 +282,8 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
             ) : (
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '48px' }}>
                     {winners[1] && (
-                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '250px', justifyContent: 'flex-end', animationDelay: '200ms' }}>
-                            <div style={{ width: '80px', height: '80px', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '12px' }}>
+                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '340px', justifyContent: 'flex-end', animationDelay: '200ms' }}>
+                            <div style={{ width: '110px', height: '110px', minWidth: '110px', minHeight: '110px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '12px' }}>
                                 <img src={winners[1].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <h2 style={{ marginBottom: '8px' }}>{winners[1].username}</h2>
@@ -281,8 +293,8 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     )}
 
                     {winners[0] && (
-                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '350px', justifyContent: 'flex-end', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)', order: -1, zIndex: 10 }}>
-                            <div style={{ width: '120px', height: '120px', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '16px' }}>
+                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '460px', justifyContent: 'flex-end', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)', order: -1, zIndex: 10 }}>
+                            <div style={{ width: '160px', height: '160px', minWidth: '160px', minHeight: '160px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '16px' }}>
                                 <img src={winners[0].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <div style={{ background: '#FFD700', color: 'black', padding: '4px 12px', borderRadius: '20px', fontWeight: 'bold', marginBottom: '16px' }}>
@@ -294,8 +306,8 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     )}
 
                     {winners[2] && (
-                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '200px', justifyContent: 'flex-end', animationDelay: '400ms' }}>
-                            <div style={{ width: '70px', height: '70px', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '12px' }}>
+                        <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '280px', justifyContent: 'flex-end', animationDelay: '400ms' }}>
+                            <div style={{ width: '100px', height: '100px', minWidth: '100px', minHeight: '100px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '12px' }}>
                                 <img src={winners[2].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <h2 style={{ marginBottom: '8px' }}>{winners[2].username}</h2>

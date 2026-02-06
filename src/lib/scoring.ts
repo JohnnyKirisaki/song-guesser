@@ -34,6 +34,9 @@ function stripTitleExtras(str: string): string {
         .replace(/\s*\[.*?\]/g, ' ')
         .replace(/\s*-\s*(feat\.?.*|ft\.?.*|with .*|remix|edit|version|mix|live|acoustic|remaster|radio edit|extended mix).*$/gi, ' ')
         .replace(/\s+(?:[a-z0-9]+\s+)?(?:version|remix|edit|mix|live|acoustic|remaster|instrumental|karaoke|cover|demo|extended)\b/gi, ' ')
+        // User Request: Remove everything after " - " or "/"
+        .replace(/\s+-\s+.*$/g, ' ')
+        .replace(/\/.*$/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
 }
@@ -167,12 +170,8 @@ export function scoreTrackMatch(source: TrackSource, candidate: TrackCandidate):
     }
 
     // Strip featured artists and version info from titles for base comparison
-    const stripFeatures = (str: string) => str
-        .replace(/\s*\(feat\.?.*?\)/gi, '')
-        .replace(/\s*\(with .*?\)/gi, '')
-        .replace(/\s*\(ft\.?.*?\)/gi, '')
-        .replace(/\s*-\s*.*?(remix|version|edit|mix)/gi, '') // Strip " - ... Remix"
-        .trim()
+    // Use the robust shared function to handle (Rock Version), (Live), - Remix, etc. effectively.
+    const stripFeatures = stripTitleExtras
 
     // IMPORTANT: Strip features BEFORE normalizing (normalizeForCompare removes parentheses)
     const srcTitle = normalizeForCompare(stripFeatures(source.title))

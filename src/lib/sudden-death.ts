@@ -23,19 +23,37 @@ export async function initiateSuddenDeath(
     const roomData = snapshot.val()
     const allSongs = Object.values(roomData.songs || {}) as SongItem[]
 
-    const tiedPlayerSongs = allSongs.filter(song =>
-        tiedPlayerIds.includes(song.picked_by_user_id)
-    )
-
     // 2. Exclude songs already used in main game
     const usedSongIds = new Set(currentGameState.playlist.map(s => s.id))
-    const availableSongs = tiedPlayerSongs.filter(s => !usedSongIds.has(s.id))
+
+    // Filter available songs by Owner First
+    const tiedPlayerSongs = allSongs.filter(song =>
+        tiedPlayerIds.includes(song.picked_by_user_id) && !usedSongIds.has(song.id)
+    )
+
+    // Also get ALL other available songs (fallback pool)
+    const otherAvailableSongs = allSongs.filter(song =>
+        !tiedPlayerIds.includes(song.picked_by_user_id) && !usedSongIds.has(song.id)
+    )
 
     // 3. Select 2 songs per player for first sudden death batch
     const initialCount = Math.max(2, tiedPlayerIds.length * 2)
-    const suddenDeathPlaylist = selectSuddenDeathSongs(availableSongs, tiedPlayerIds, initialCount)
 
-    console.log(`[SuddenDeath] Initiating with ${tiedPlayerIds.length} players, ${suddenDeathPlaylist.length} initial songs`)
+    // Try to fill with tied players first
+    let suddenDeathPlaylist = selectSuddenDeathSongs(tiedPlayerSongs, tiedPlayerIds, initialCount)
+
+    // If not enough, fill from fallback
+    if (suddenDeathPlaylist.length < initialCount) {
+        const needed = initialCount - suddenDeathPlaylist.length
+        console.log(`[SuddenDeath] Not enough songs from duelists (got ${suddenDeathPlaylist.length}). Fetching ${needed} from pool.`)
+
+        // Shuffle fallback pool
+        const pool = otherAvailableSongs.sort(() => 0.5 - Math.random())
+        const extras = pool.slice(0, needed)
+        suddenDeathPlaylist = [...suddenDeathPlaylist, ...extras]
+    }
+
+    console.log(`[SuddenDeath] Initiating with ${tiedPlayerIds.length} players, ${suddenDeathPlaylist.length} songs (requested ${initialCount})`)
 
     // 4. Update game state
     const updates: Record<string, any> = {
@@ -135,19 +153,36 @@ export async function fetchMoreSuddenDeathSongs(
     const allSongs = Object.values(roomData.songs || {}) as SongItem[]
 
     const usedSongIds = new Set(currentGameState.playlist.map(s => s.id))
-    const availableSongs = allSongs.filter(song =>
+
+    // 1. Try tied players first
+    const tiedPlayerSongs = allSongs.filter(song =>
         tiedPlayerIds.includes(song.picked_by_user_id) &&
         !usedSongIds.has(song.id)
     )
 
-    if (availableSongs.length === 0) {
-        console.warn('[SuddenDeath] No more songs available from tied players')
-        return false
-    }
+    // 2. Fallback pool
+    const otherAvailableSongs = allSongs.filter(song =>
+        !tiedPlayerIds.includes(song.picked_by_user_id) &&
+        !usedSongIds.has(song.id)
+    )
 
     // Add 2 more songs per player
     const moreCount = Math.max(2, tiedPlayerIds.length * 2)
-    const newSongs = selectSuddenDeathSongs(availableSongs, tiedPlayerIds, moreCount)
+    let newSongs = selectSuddenDeathSongs(tiedPlayerSongs, tiedPlayerIds, moreCount)
+
+    if (newSongs.length < moreCount) {
+        const needed = moreCount - newSongs.length
+        console.log(`[SuddenDeath] FetchMore: Not enough from duelists. Need ${needed} more from pool.`)
+
+        const pool = otherAvailableSongs.sort(() => 0.5 - Math.random())
+        const extras = pool.slice(0, needed)
+        newSongs = [...newSongs, ...extras]
+    }
+
+    if (newSongs.length === 0) {
+        console.warn('[SuddenDeath] ABSOLUTELY NO SONGS LEFT IN ENTIRE ROOM!')
+        return false
+    }
 
     console.log(`[SuddenDeath] Fetching ${newSongs.length} more songs`)
 
