@@ -687,7 +687,8 @@ export default function GamePage() {
             picked_by_user_id: currentSong.picked_by_user_id,
             started_at: currentGameState.round_start_time || null,
             ended_at: serverTimestamp() as any,
-            guesses: roundGuesses
+            guesses: roundGuesses,
+            is_sudden_death: !!currentIsSuddenDeath
         }
 
         await update(ref(db), updates)

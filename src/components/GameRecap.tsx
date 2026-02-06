@@ -35,6 +35,7 @@ type RoundHistory = {
     artist_name: string
     cover_url?: string
     guesses: RoundGuess[]
+    is_sudden_death?: boolean
 }
 
 type StatItem = {
@@ -107,12 +108,15 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                     const key = round.song_id || `${round.track_name}-${round.artist_name}`
 
-                    if (!songCounts[key]) songCounts[key] = { count: 0, song: round }
-                    songCounts[key].count += correctGuesses.length
 
-                    if (!songAttempts[key]) songAttempts[key] = { total: 0, correct: 0, song: round }
-                    songAttempts[key].total += guesses.length
-                    songAttempts[key].correct += correctGuesses.length
+                    if (!round.is_sudden_death) {
+                        if (!songCounts[key]) songCounts[key] = { count: 0, song: round }
+                        songCounts[key].count += correctGuesses.length
+
+                        if (!songAttempts[key]) songAttempts[key] = { total: 0, correct: 0, song: round }
+                        songAttempts[key].total += guesses.length
+                        songAttempts[key].correct += correctGuesses.length
+                    }
 
                     for (const g of correctGuesses) {
                         if (!fastestGuess || g.time_taken < (fastestGuess as any).guess.time_taken) {
