@@ -4,7 +4,6 @@ export type ScoringMode = 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'ly
 
 // Minimal cleanup for Search Queries (keep special chars that might avail in search)
 export function normalizeForSearch(str: string): string {
-    // Redeploy force update
     return str.toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
@@ -171,8 +170,12 @@ export function scoreTrackMatch(source: TrackSource, candidate: TrackCandidate):
     }
 
     // Strip featured artists and version info from titles for base comparison
-    // Use the robust shared function to handle (Rock Version), (Live), - Remix, etc. effectively.
-    const stripFeatures = stripTitleExtras
+    const stripFeatures = (str: string) => str
+        .replace(/\s*\(feat\.?.*?\)/gi, '')
+        .replace(/\s*\(with .*?\)/gi, '')
+        .replace(/\s*\(ft\.?.*?\)/gi, '')
+        .replace(/\s*-\s*.*?(remix|version|edit|mix)/gi, '') // Strip " - ... Remix"
+        .trim()
 
     // IMPORTANT: Strip features BEFORE normalizing (normalizeForCompare removes parentheses)
     const srcTitle = normalizeForCompare(stripFeatures(source.title))

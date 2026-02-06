@@ -61,7 +61,6 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     useEffect(() => {
         const fetchStats = async () => {
             const fallbackStats: StatItem[] = [
-                // Redeploy force update
                 { label: 'Most Guessed', value: 'No valid answers', icon: Music, color: '#1ed760' },
                 { label: 'Hardest Song', value: 'No valid answers', icon: Zap, color: '#e91429' },
                 { label: 'Fastest Guess', value: 'No valid answers', icon: Clock, color: '#3b82f6' }
