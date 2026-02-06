@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
-import { ref, onValue, update, remove } from 'firebase/database'
+import { ref, onValue, update, remove, onDisconnect, serverTimestamp } from 'firebase/database'
 import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { fetchSpotifyData, addSongsToRoom } from '@/lib/spotify'
+import UserPopover from '@/components/UserPopover'
 
 type Player = {
     id: string
@@ -17,12 +18,37 @@ type Player = {
     is_host: boolean
     is_importing?: boolean
     import_progress?: number
+    joined_at?: number
 }
 
 type RoomSettings = {
     rounds: number
     time: number
     mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only'
+}
+
+const RadialProgress = ({ progress, size = 24, strokeWidth = 3, color = 'currentColor' }: { progress: number, size?: number, strokeWidth?: number, color?: string }) => {
+    const radius = (size - strokeWidth) / 2
+    const circumference = radius * 2 * Math.PI
+    const offset = circumference - (progress / 100) * circumference
+
+    return (
+        <div style={{ position: 'relative', width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+                <circle
+                    cx={size / 2} cy={size / 2} r={radius}
+                    fill="transparent" stroke="rgba(255,255,255,0.2)" strokeWidth={strokeWidth}
+                />
+                <circle
+                    cx={size / 2} cy={size / 2} r={radius}
+                    fill="transparent" stroke={color} strokeWidth={strokeWidth}
+                    strokeDasharray={circumference} strokeDashoffset={offset}
+                    strokeLinecap="round"
+                    style={{ transition: 'stroke-dashoffset 0.3s ease' }}
+                />
+            </svg>
+        </div>
+    )
 }
 
 export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { roomCode: string, initialSettings: any, isHost: boolean, hostId: string }) {
@@ -35,6 +61,23 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     const [isStarting, setIsStarting] = useState(false)
     const [loadingMsg, setLoadingMsg] = useState('Starting...')
     const [copied, setCopied] = useState(false)
+    const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
+    const [menuAnchor, setMenuAnchor] = useState<{ x: number, y: number } | null>(null)
+
+    const openUserMenu = (user: Player, event: MouseEvent) => {
+        event.preventDefault()
+        event.stopPropagation()
+        setSelectedPlayer(user)
+        setMenuAnchor({ x: event.clientX, y: event.clientY })
+    }
+
+    const closeUserMenu = () => {
+        setSelectedPlayer(null)
+        setMenuAnchor(null)
+    }
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+    const [creationProgress, setCreationProgress] = useState(0)
+
 
     // Import State
     const [importUrl, setImportUrl] = useState('')
@@ -80,10 +123,36 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
             if (data.status === 'playing') {
                 router.push(`/game/${roomCode}`)
             }
+            if (typeof data.creation_progress === 'number') {
+                setCreationProgress(data.creation_progress)
+            }
         })
 
         return () => unsubscribe()
     }, [roomCode, router])
+
+    // --------------------------------------------------------------------------------
+    // 1.5 PRESENCE (Hosting Status)
+    // --------------------------------------------------------------------------------
+    useEffect(() => {
+        if (!profile) return
+
+        const presenceRef = ref(db, `users/${profile.id}/hosting`)
+
+        // Set presence
+        update(presenceRef, {
+            roomCode,
+            created_at: serverTimestamp()
+        })
+
+        // Clear on disconnect
+        onDisconnect(presenceRef).remove()
+
+        return () => {
+            // Clear on unmount
+            remove(presenceRef)
+        }
+    }, [profile, roomCode])
 
     // --------------------------------------------------------------------------------
     // 2. ACTIONS
@@ -157,54 +226,20 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         }
 
         setIsStarting(true)
-        setLoadingMsg('Strategies...') // Initial Loading Message
+        // Only show "Loading Lyrics" if in lyrics mode, otherwise generic
+        setLoadingMsg(settings.mode === 'lyrics_only' ? 'Loading Lyrics...' : 'Starting...')
+        setCreationProgress(0)
 
         try {
-            // 1. Prepare Payload (Generates Playlist)
-            const { prepareGamePayload } = await import('@/lib/game-logic')
-            const { updates, playlist } = await prepareGamePayload(roomCode, settings)
+            // 1. Call Secure Start API
+            const res = await fetch('/api/game/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ roomCode, settings })
+            })
+            const data = await res.json()
 
-            // 2. Lyrics Mode: Prefetch ONLY relevant songs
-            if (settings.mode === 'lyrics_only') {
-                const songsToFetch = playlist // ONLY the songs selected for this game
-                console.log(`[Lobby] Prefetching lyrics for ${songsToFetch.length} selected songs...`)
-
-                const BATCH_SIZE = 5
-                const lyricsUpdates: Record<string, string> = {}
-
-                for (let i = 0; i < songsToFetch.length; i += BATCH_SIZE) {
-                    const batch = songsToFetch.slice(i, i + BATCH_SIZE)
-                    setLoadingMsg('Fetching Lyrics...')
-
-                    await Promise.all(batch.map(async (song) => {
-                        try {
-                            const res = await fetch(`/api/lyrics?artist=${encodeURIComponent(song.artist_name)}&title=${encodeURIComponent(song.track_name)}`)
-                            const data = await res.json()
-                            if (data.lyrics) {
-                                // Add to batched updates object
-                                lyricsUpdates[song.id] = data.lyrics
-                            }
-                        } catch (e) {
-                            console.error(`Failed to fetch lyrics for ${song.track_name}`, e)
-                        }
-                    }))
-                    // Small delay to be nice to API
-                    await new Promise(r => setTimeout(r, 200))
-                }
-
-                // Write ALL lyrics at once to `rooms/${code}/lyrics_cache`
-                if (Object.keys(lyricsUpdates).length > 0) {
-                    // Merge with main updates? No, separate write is cleaner for large data.
-                    // Actually, `update` works great with deep paths.
-                    // We'll write to lyrics_cache node directly.
-                    await update(ref(db, `rooms/${roomCode}/lyrics_cache`), lyricsUpdates)
-                }
-            }
-
-            setLoadingMsg('Starting...')
-
-            // 3. Commit Game Start
-            await update(ref(db), updates)
+            if (!res.ok) throw new Error(data.error || 'Failed to start game')
 
         } catch (e: any) {
             console.error(e)
@@ -227,9 +262,13 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         router.push('/')
     }
 
-    const deleteRoom = async () => {
+    const handleDeleteClick = () => {
         if (!isHost) return
-        if (!confirm('Delete Room?')) return
+        setShowDeleteConfirm(true)
+    }
+
+    const confirmDeleteRoom = async () => {
+        if (!isHost) return
         const roomRef = ref(db, `rooms/${roomCode}`)
         await remove(roomRef)
         router.push('/')
@@ -262,12 +301,18 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1 }}>
-                    {players.map((p) => (
+                    {[...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0)).map((p) => (
                         <div key={p.id} className="glass-panel" style={{
                             display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px',
                             border: '1px solid', borderColor: p.is_ready ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
-                            background: p.is_ready ? 'rgba(46, 242, 160, 0.08)' : 'rgba(255, 255, 255, 0.04)'
-                        }}>
+                            background: p.is_ready ? 'rgba(46, 242, 160, 0.08)' : 'rgba(255, 255, 255, 0.04)',
+                            cursor: 'pointer', transition: 'background 0.2s'
+                        }}
+                            onClick={(e) => openUserMenu(p, e)}
+                            onContextMenu={(e) => openUserMenu(p, e)}
+                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = p.is_ready ? 'rgba(46, 242, 160, 0.08)' : 'rgba(255, 255, 255, 0.04)'}
+                        >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                 <img src={p.avatar_url} alt={p.username} style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
                                 <div>
@@ -292,12 +337,29 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                     )}
                                 </div>
                             </div>
-                            {isHost && p.id !== hostId && (
-                                <button onClick={() => kickPlayer(p.id)} style={{ color: 'var(--error)', padding: '4px' }}><XCircle size={16} /></button>
-                            )}
-                            {p.id === hostId && <Crown size={16} color="#fbbf24" />}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {isHost && p.id !== hostId && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); kickPlayer(p.id) }}
+                                        style={{ color: 'var(--error)', padding: '4px' }}
+                                    >
+                                        <XCircle size={16} />
+                                    </button>
+                                )}
+                                {p.id === hostId && <Crown size={16} color="#fbbf24" />}
+                            </div>
                         </div>
                     ))}
+
+                    {selectedPlayer && (
+                        <UserPopover
+                            isOpen={!!selectedPlayer}
+                            targetUser={selectedPlayer}
+                            onClose={closeUserMenu}
+                            currentUserProfileId={profile?.id}
+                            anchorPoint={menuAnchor || undefined}
+                        />
+                    )}
                 </div>
 
                 <div style={{ marginTop: '24px' }}>
@@ -322,7 +384,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                         <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Game Settings</h2>
                     </div>
                     {isHost ? (
-                        <button onClick={deleteRoom} style={{ display: 'flex', gap: '8px', padding: '8px 16px', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: '99px', alignItems: 'center', fontSize: '0.9rem' }}><LogOut size={16} /> Delete Room</button>
+                        <button onClick={handleDeleteClick} style={{ display: 'flex', gap: '8px', padding: '8px 16px', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: '99px', alignItems: 'center', fontSize: '0.9rem' }}><LogOut size={16} /> Delete Room</button>
                     ) : (
                         <button onClick={leaveRoom} style={{ display: 'flex', gap: '8px', padding: '8px 16px', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: '99px', alignItems: 'center', fontSize: '0.9rem' }}><LogOut size={16} /> Leave</button>
                     )}
@@ -431,9 +493,9 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                             style={{ padding: '16px 48px', fontSize: '1.2rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}
                         >
                             {isStarting ? (
-                                <><Loader2 className="animate-spin" /> {loadingMsg}</>
+                                <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> {loadingMsg}</>
                             ) : players.some(p => p.is_importing) ? (
-                                <><Loader2 className="animate-spin" /> Waiting for imports...</>
+                                <><RadialProgress progress={importProgress} size={20} strokeWidth={3} /> Importing playlist...</>
                             ) : (
                                 <><Play fill="currentColor" /> START GAME</>
                             )}
@@ -441,15 +503,21 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                     ) : (
                         <button
                             onClick={toggleReady}
+                            disabled={creationProgress > 0}
                             style={{
                                 padding: '16px 48px', fontSize: '1.2rem', width: '100%', cursor: 'pointer', borderRadius: '99px',
-                                border: currentPlayer?.is_ready ? '2px solid var(--primary)' : '1px solid rgba(255,255,255,0.1)',
-                                background: currentPlayer?.is_ready ? 'rgba(46, 242, 160, 0.2)' : 'rgba(255, 255, 255, 0.04)'
-                                ,
-                                color: currentPlayer?.is_ready ? 'white' : 'var(--text-muted)', fontWeight: 700
+                                border: (creationProgress > 0) ? '1px solid var(--primary)' : (currentPlayer?.is_ready ? '2px solid var(--primary)' : '1px solid rgba(255,255,255,0.1)'),
+                                background: (creationProgress > 0) ? 'var(--bg-secondary)' : (currentPlayer?.is_ready ? 'rgba(46, 242, 160, 0.2)' : 'rgba(255, 255, 255, 0.04)'),
+                                color: (creationProgress > 0) ? 'white' : (currentPlayer?.is_ready ? 'white' : 'var(--text-muted)'),
+                                fontWeight: 700,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px'
                             }}
                         >
-                            {currentPlayer?.is_ready ? 'READY!' : hasImported ? 'CLICK TO READY UP' : 'SKIP IMPORT / READY'}
+                            {creationProgress > 0 ? (
+                                <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> STARTING...</>
+                            ) : (
+                                currentPlayer?.is_ready ? 'READY!' : hasImported ? 'CLICK TO READY UP' : 'SKIP IMPORT / READY'
+                            )}
                         </button>
                     )}
                 </div>
@@ -460,6 +528,43 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                     </div>
                 )}
             </div>
+
+            {/* Delete Room Confirmation Modal */}
+            {showDeleteConfirm && (
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+                    backdropFilter: 'blur(8px)', zIndex: 100,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                    <div className="glass-panel" style={{ padding: '32px', width: '100%', maxWidth: '400px', textAlign: 'center', border: '1px solid var(--error)' }}>
+                        <h2 style={{ marginBottom: '16px', fontSize: '1.5rem', fontWeight: 700, color: 'var(--error)' }}>Delete Room?</h2>
+                        <p style={{ marginBottom: '24px', color: 'var(--text-muted)' }}>
+                            Are you sure you want to delete this room? All players will be kicked and the game will end.
+                        </p>
+                        <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
+                            <button
+                                onClick={() => setShowDeleteConfirm(false)}
+                                style={{
+                                    padding: '12px 24px', borderRadius: '8px', cursor: 'pointer',
+                                    background: 'rgba(255,255,255,0.05)', color: 'white', border: '1px solid rgba(255,255,255,0.1)'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmDeleteRoom}
+                                className="btn-primary"
+                                style={{
+                                    padding: '12px 24px', background: 'var(--error)', borderColor: 'var(--error)',
+                                    color: 'white', display: 'flex', alignItems: 'center', gap: '8px'
+                                }}
+                            >
+                                <LogOut size={16} /> Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

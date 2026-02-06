@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, type MouseEvent, type SyntheticEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, get, serverTimestamp, onDisconnect } from 'firebase/database'
@@ -10,12 +10,13 @@ import { useVolume } from '@/context/VolumeContext'
 
 import { Music, Check } from 'lucide-react'
 import ProgressBar from '@/components/ProgressBar'
-import { calculateScore } from '@/lib/scoring'
 import { soundManager } from '@/lib/sounds'
+import { processNextRound } from '@/lib/game-round-manager'
 import EmoteBar from '@/components/EmoteBar'
 import Onboarding from '@/components/Onboarding'
 import GameRecap from '@/components/GameRecap'
 import { initiateSuddenDeath, fetchMoreSuddenDeathSongs, endSuddenDeath } from '@/lib/sudden-death'
+import UserPopover from '@/components/UserPopover'
 
 type Player = {
     id: string
@@ -51,20 +52,119 @@ export default function GamePage() {
     const [players, setPlayers] = useState<Player[]>([])
     const [lyricsSnippet, setLyricsSnippet] = useState<string | null>(null)
     const [lyricsLoading, setLyricsLoading] = useState(false)
+    const [showRevealLyricsFetch, setShowRevealLyricsFetch] = useState(false)
+    const [pendingRevealLyricsFetch, setPendingRevealLyricsFetch] = useState(false)
+
     const [serverTimeOffset, setServerTimeOffset] = useState(0)
+    const [isRevealing, setIsRevealing] = useState(false) // New state for API call loading
+    const [revealError, setRevealError] = useState<string | null>(null) // Capture API/Network errors
+
     const { volume } = useVolume()
+    const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
+    const [menuAnchor, setMenuAnchor] = useState<{ x: number, y: number } | null>(null)
+
+    const openUserMenu = (user: Player, event: MouseEvent) => {
+        event.preventDefault()
+        event.stopPropagation()
+        setSelectedPlayer(user)
+        setMenuAnchor({ x: event.clientX, y: event.clientY })
+    }
+
+    const closeUserMenu = () => {
+        setSelectedPlayer(null)
+        setMenuAnchor(null)
+    }
+
+    const handleAudioError = (_e: SyntheticEvent<HTMLAudioElement, Event>) => {
+        const song = currentSong
+        if (!song) return
+
+        const trackId = song.spotify_uri
+        if (!trackId) return
+
+        setIsPlaying(false)
+
+        const key = song.id || trackId
+        const lastErrorAt = audioErrorRef.current[key] || 0
+        if (Date.now() - lastErrorAt < 10000) {
+            return
+        }
+        audioErrorRef.current[key] = Date.now()
+
+        resolvePreviewForSong(song)
+            .then((newUrl) => {
+                if (!newUrl || !audioRef.current) return
+                audioRef.current.src = newUrl
+                lastAudioSrcRef.current = newUrl
+                audioRef.current.load()
+                audioRef.current.play()
+                    .then(() => setIsPlaying(true))
+                    .catch(err => console.error('[Audio] Play failed after error refresh:', err))
+            })
+            .catch(err => {
+                console.error('[Audio] Refresh after error failed:', err)
+            })
+    }
 
     // Refs
     const audioRef = useRef<HTMLAudioElement | null>(null)
-    const audioRetryRef = useRef<Record<string, boolean>>({})
+    const audioRetryRef = useRef<Record<string, number>>({})
     const lastRevealSoundRoundRef = useRef<number | null>(null)
     const playersRef = useRef<Player[]>([]) // Authoritative ref to avoid stale closures
+    const gameStateRef = useRef<GameState | null>(null)
+    const hasScheduledNextRoundRef = useRef(false)
+    const sdTopUpRoundRef = useRef<number | null>(null)
     const latestGuessRef = useRef({ artist: '', title: '' }) // Latest text input
     const hasSubmittedRef = useRef(false) // Ref for sync logic to avoid stale closure
     const titleInputRef = useRef<HTMLInputElement | null>(null)
     const artistInputRef = useRef<HTMLInputElement | null>(null)
     const lyricsCacheRef = useRef<Record<string, string | null>>({})
     const processingRoundRef = useRef<number | null>(null) // Prevention for double-execution
+    const lastAudioSrcRef = useRef<string | null>(null)
+    const audioPreviewOverrideRef = useRef<Record<string, string>>({})
+    const audioErrorRef = useRef<Record<string, number>>({})
+
+    const resolvePreviewForSong = async (song: SongItem): Promise<string | null> => {
+        if (!song) return null
+        const cached = audioPreviewOverrideRef.current[song.id]
+        if (cached) return cached
+
+        const trackId = song.spotify_uri
+        const isDeezerId = typeof trackId === 'string' && /^\d+$/.test(trackId)
+
+        try {
+            if (isDeezerId) {
+                const res = await fetch(`/api/refresh-track?id=${trackId}`)
+                const data = await res.json()
+                if (data.preview_url) {
+                    const newUrl = data.preview_url.replace(/^http:\/\//i, 'https://')
+                    audioPreviewOverrideRef.current[song.id] = newUrl
+                    return newUrl
+                }
+            }
+
+            if (song.artist_name && song.track_name) {
+                const res = await fetch('/api/resolve-tracks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tracks: [{ artist: song.artist_name, title: song.track_name }]
+                    })
+                })
+                const data = await res.json()
+                const resolved = data?.tracks?.find((t: any) => t?.resolved && t?.deezer?.preview_url)
+                if (resolved?.deezer?.preview_url) {
+                    const newUrl = resolved.deezer.preview_url.replace(/^http:\/\//i, 'https://')
+                    audioPreviewOverrideRef.current[song.id] = newUrl
+                    return newUrl
+                }
+            }
+        } catch (err) {
+            console.error('[Audio] Preview resolve failed:', err)
+        }
+
+        return null
+    }
 
     // Sync Clock Skew
     useEffect(() => {
@@ -208,6 +308,17 @@ export default function GamePage() {
             setHasSubmitted(false)
             setGuess({ artist: '', title: '' })
             setLyricsSnippet(null)
+
+            // Local Flicker Prevention:
+            // Immediately clear "Correct" status on round transition so we don't show old "Green" tags
+            // while waiting for next API result.
+            setPlayers(prev => prev.map(p => ({
+                ...p,
+                last_round_correct_artist: false,
+                last_round_correct_title: false,
+                is_correct: false,
+                last_round_points: 0
+            })))
         }
     }, [gameState?.current_round_index])
 
@@ -239,8 +350,21 @@ export default function GamePage() {
                 return
             }
 
+            const artist = typeof song.artist_name === 'string' ? song.artist_name.trim() : ''
+            const title = typeof song.track_name === 'string' ? song.track_name.trim() : ''
+            const hasRealMetadata = !!artist && !!title && artist !== '???' && title !== '???'
+
+            if (!hasRealMetadata) {
+                // Avoid invalid API requests for masked songs (e.g. sudden death)
+                if (updateState) {
+                    setLyricsSnippet(null)
+                    setLyricsLoading(false)
+                }
+                return
+            }
+
             // Fallback: Fetch API
-            const res = await fetch(`/api/lyrics?artist=${encodeURIComponent(song.artist_name)}&title=${encodeURIComponent(song.track_name)}`)
+            const res = await fetch(`/api/lyrics?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`)
             const data = await res.json()
             const lyrics = data.lyrics || null
             lyricsCacheRef.current[song.id] = lyrics
@@ -274,6 +398,25 @@ export default function GamePage() {
         fetchLyricsForSong(nextSong, false)
     }, [gameState?.current_round_index, isLyricsOnly, gameState?.playlist])
 
+    // Reset audio retry state per song to avoid stale "already retried" blocks
+    useEffect(() => {
+        audioRetryRef.current = {}
+    }, [currentSong?.id])
+
+    // Only show "Fetching lyrics..." during reveal screen
+    useEffect(() => {
+        if (gameState?.phase !== 'reveal') return
+        if (!pendingRevealLyricsFetch) return
+
+        setShowRevealLyricsFetch(true)
+        const t = setTimeout(() => {
+            setShowRevealLyricsFetch(false)
+            setPendingRevealLyricsFetch(false)
+        }, 900)
+
+        return () => clearTimeout(t)
+    }, [gameState?.phase, pendingRevealLyricsFetch])
+
     // --------------------------------------------------------------------------------
     // 3. AUDIO & TIMER (Client Side)
     // --------------------------------------------------------------------------------
@@ -281,41 +424,117 @@ export default function GamePage() {
         if (!gameState || !currentSong) return
 
         const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
-        const shouldPlayAudio = (gameState.phase === 'playing' || gameState.phase === 'reveal') && !isLyricsOnly
+        const shouldPlayAudio = gameState.phase === 'reveal' || (!isLyricsOnly && gameState.phase === 'playing')
         const previewUrl = typeof currentSong.preview_url === 'string' ? currentSong.preview_url.trim() : ''
         const normalizedPreview = previewUrl.replace(/^http:\/\//i, 'https://')
-        const hasValidPreview = normalizedPreview.length > 0 && normalizedPreview.startsWith('http')
+        const overridePreview = currentSong?.id ? audioPreviewOverrideRef.current[currentSong.id] : null
+        const previewToUse = overridePreview || normalizedPreview
+        const hasValidPreview = previewToUse.length > 0 && previewToUse.startsWith('http')
+        const retryKey = currentSong.id || previewToUse
+        const lastRetryAt = audioRetryRef.current[retryKey] || 0
+        const canRetry = !lastRetryAt || (Date.now() - lastRetryAt) > 10000
+        const nowSeconds = Math.floor(Date.now() / 1000)
 
-        if (shouldPlayAudio && hasValidPreview) {
+        const playUrl = (url: string) => {
+            if (!audioRef.current) return
+            if (url !== lastAudioSrcRef.current) {
+                audioRef.current.src = url
+                lastAudioSrcRef.current = url
+                audioRef.current.load()
+            }
+            if (audioRef.current.paused) {
+                const playPromise = audioRef.current.play()
+                if (playPromise !== undefined) {
+                    playPromise
+                        .then(() => {
+                            setIsPlaying(true)
+                        })
+                        .catch((err) => {
+                            console.error('[Audio] Playback failed:', err)
+                            setIsPlaying(false)
+                            const msg = typeof err?.message === 'string' ? err.message : ''
+                            const isNotSupported = err?.name === 'NotSupportedError' || msg.includes('no supported source')
+                            if (isNotSupported) {
+                                const key = currentSong.id || url
+                                const lastErr = audioErrorRef.current[key] || 0
+                                if (Date.now() - lastErr > 10000) {
+                                    audioErrorRef.current[key] = Date.now()
+                                    resolvePreviewForSong(currentSong)
+                                        .then((newUrl) => {
+                                            if (!newUrl || !audioRef.current) return
+                                            audioRef.current.src = newUrl
+                                            lastAudioSrcRef.current = newUrl
+                                            audioRef.current.load()
+                                            return audioRef.current.play()
+                                                .then(() => setIsPlaying(true))
+                                                .catch(e => console.error('[Audio] Playback failed after resolve:', e))
+                                        })
+                                        .catch(e => console.error('[Audio] Resolve after NotSupported failed:', e))
+                                }
+                            }
+                        })
+                }
+            }
+        }
+
+        if (shouldPlayAudio) {
+            // Lyrics mode: only reveal audio, and avoid expired Spotify previews
+            if (isLyricsOnly && gameState.phase === 'reveal') {
+                const matchExp = previewToUse.match(/exp=(\d+)/)
+                const expTime = matchExp ? parseInt(matchExp[1]) : 0
+                const isExpired = expTime > 0 && expTime < nowSeconds + 60
+
+                if (overridePreview && hasValidPreview && !isExpired) {
+                    playUrl(previewToUse)
+                    return
+                }
+
+                if (!hasValidPreview || isExpired) {
+                    if (canRetry) {
+                        audioRetryRef.current[retryKey] = Date.now()
+                        resolvePreviewForSong(currentSong)
+                            .then((newUrl) => {
+                                if (newUrl) {
+                                    playUrl(newUrl)
+                                } else {
+                                    console.error('[Audio] Refresh failed: No URL returned')
+                                }
+                            })
+                            .catch(e => {
+                                console.error('[Audio] Refresh Error:', e)
+                            })
+                    } else {
+                        console.warn('[Audio] Token expired and already retried. Skipping playback.')
+                    }
+                    return
+                }
+
+                playUrl(previewToUse)
+                return
+            }
+
+            if (!hasValidPreview) return
+
             // Check for expiration
-            const matchExp = previewUrl.match(/exp=(\d+)/)
+            const matchExp = previewToUse.match(/exp=(\d+)/)
             const expTime = matchExp ? parseInt(matchExp[1]) : 0
-            const nowSeconds = Math.floor(Date.now() / 1000)
 
             // If expired or about to expire (within 60s), refresh it
             if (expTime > 0 && expTime < nowSeconds + 60) {
-                const trackId = currentSong.spotify_uri
+                if (canRetry) {
+                    audioRetryRef.current[retryKey] = Date.now() // prevent infinite loop
 
-                if (trackId && !audioRetryRef.current[previewUrl]) {
-                    audioRetryRef.current[previewUrl] = true // prevent infinite loop
-
-                    fetch(`/api/refresh-track?id=${trackId}`)
-                        .then(res => res.json())
-                        .then(data => {
-                            if (data.preview_url) {
-                                if (audioRef.current) {
-                                    const newUrl = data.preview_url.replace(/^http:\/\//i, 'https://')
-                                    audioRef.current.src = newUrl
-                                    audioRef.current.load()
-                                    audioRef.current.play()
-                                        .then(() => setIsPlaying(true))
-                                        .catch(e => console.error('[Audio] Play failed after refresh:', e))
-                                }
+                    resolvePreviewForSong(currentSong)
+                        .then((newUrl) => {
+                            if (newUrl) {
+                                playUrl(newUrl)
                             } else {
                                 console.error('[Audio] Refresh failed: No URL returned')
                             }
                         })
-                        .catch(e => console.error('[Audio] Refresh Error:', e))
+                        .catch(e => {
+                            console.error('[Audio] Refresh Error:', e)
+                        })
 
                     return // Wait for async refresh
                 } else {
@@ -324,29 +543,7 @@ export default function GamePage() {
                 }
             }
 
-            // Normal Playback (Valid Token or No Token)
-            if (audioRef.current) {
-                // Only update Source if it changed (prevents reloading)
-                if (normalizedPreview !== audioRef.current.src) {
-                    audioRef.current.src = normalizedPreview
-                    audioRef.current.load()
-                }
-
-                // Attempt playback if paused
-                if (audioRef.current.paused) {
-                    const playPromise = audioRef.current.play()
-                    if (playPromise !== undefined) {
-                        playPromise
-                            .then(() => {
-                                setIsPlaying(true)
-                            })
-                            .catch((err) => {
-                                console.error('[Audio] Playback failed:', err)
-                                setIsPlaying(false)
-                            })
-                    }
-                }
-            }
+            playUrl(previewToUse)
         } else {
             // Stop Audio
             if (audioRef.current && !audioRef.current.paused) {
@@ -369,7 +566,7 @@ export default function GamePage() {
         const me = players.find(p => p.id === profile.id)
         if (!me) return
 
-        const correct = !!(me.last_round_correct_title || me.last_round_correct_artist)
+        const correct = me.last_round_correct_title === true || me.last_round_correct_artist === true
         soundManager.play(correct ? 'correct' : 'wrong')
         lastRevealSoundRoundRef.current = gameState.current_round_index
     }, [gameState?.phase, gameState?.current_round_index, players, profile.id])
@@ -420,21 +617,6 @@ export default function GamePage() {
             setTimeLeft(0)
         }
     }, [gameState?.phase, gameState?.round_start_time, gameState?.force_reveal_at, roomSettings?.time, isHost, serverTimeOffset])
-
-    // Lyrics: Prefetch ALL songs (Lyrics Only Mode)
-    useEffect(() => {
-        const mode = roomSettings?.mode || 'normal'
-        if (!gameState?.playlist || mode !== 'lyrics_only') return
-
-        const uncached = gameState.playlist.filter(song => lyricsCacheRef.current[song.id] === undefined)
-
-        if (uncached.length > 0) {
-            // Stagger fetches slightly
-            uncached.forEach((song, i) => {
-                setTimeout(() => fetchLyricsForSong(song, false), i * 150)
-            })
-        }
-    }, [gameState?.playlist, roomSettings?.mode])
 
     // --------------------------------------------------------------------------------
     // 3. ACTIONS (Player)
@@ -511,11 +693,11 @@ export default function GamePage() {
                 update(ref(db, `rooms/${code}/game_state`), {
                     force_reveal_at: Date.now() + 3000
                 })
-            } else if (timeLeft <= 0) {
+            } else if (timeLeft <= 0 && !revealError) {
                 processReveal()
             }
         }
-    }, [players, isHost, gameState?.phase, timeLeft, gameState?.force_reveal_at, gameState?.is_sudden_death, gameState?.dueling_player_ids]) // Listen to players update
+    }, [players, isHost, gameState?.phase, timeLeft, gameState?.force_reveal_at, gameState?.is_sudden_death, gameState?.dueling_player_ids, revealError]) // Listen to players update
 
     // Keep a ref to players to avoid stale closures in timers
     useEffect(() => {
@@ -542,267 +724,153 @@ export default function GamePage() {
         return []
     }
 
-    const processReveal = async () => {
-        if (!isHost) return
+    useEffect(() => {
+        gameStateRef.current = gameState
+    }, [gameState])
 
-        // Prevention: Double Execution Lock
-        // We need to fetch the latest state first to be sure, but we can check the local state hint first
-        if (gameState && processingRoundRef.current === gameState.current_round_index) {
-            return
+    // Reset schedule ref when playing
+    useEffect(() => {
+        if (gameState?.phase === 'playing') {
+            hasScheduledNextRoundRef.current = false
         }
+    }, [gameState?.phase])
 
-        // 1. Fetch Authoritative Data from DB (Avoid Stale Closures & Race Conditions)
-        // We wait 1s grace period before this runs, so DB should be up to date.
-        const roomRef = ref(db, `rooms/${code}`)
-        const snapshot = await get(roomRef)
-        const roomData = snapshot.val()
+    // Orchestrate Next Round when in Reveal Phase
+    useEffect(() => {
+        if (!isHost || gameState?.phase !== 'reveal') return
+        if (hasScheduledNextRoundRef.current) return
 
-        if (!roomData || !roomData.game_state || !roomData.players) {
-            console.error('[processReveal] Failed to fetch room data')
-            return
-        }
-
-        const currentGameState = roomData.game_state as GameState
-        const currentPlayers = Object.values(roomData.players) as Player[]
-        // Use the playlist from local state if DB playlist is huge/truncating, 
-        // but ideally DB has it. For now, trust DB game_state.
-        // Actually, playlist might be large so be careful. 
-        // Let's rely on local 'gameState.playlist' for the song object to save bandwidth 
-        // IF we trust it hasn't changed. The playlist shouldn't change mid-round.
-        // But 'current_round_index' MUST be fresh.
-
-        const roundIndex = currentGameState.current_round_index
-
-        // Double Check Lock with authoritative index
-        if (processingRoundRef.current === roundIndex) {
-            return
-        }
-        processingRoundRef.current = roundIndex
-
-        const currentSong = (gameState?.playlist || [])[roundIndex] // Use local playlist for speed/size
-
-        const currentIsSuddenDeath = currentGameState.is_sudden_death
-
-        // console.log(`[processReveal] Current Song:`, currentSong)
-
-        if (!currentSong) {
-            console.error('[processReveal] No song found for index', roundIndex)
-            return
-        }
-
-        const totalTime = roomSettings?.time || 15
-        const mode = roomSettings?.mode || 'normal'
-        const roundStartRaw = currentGameState.round_start_time
-        const roundStartMs = typeof roundStartRaw === 'number'
-            ? roundStartRaw
-            : roundStartRaw
-                ? new Date(roundStartRaw).getTime()
-                : null
-
-        const updates: Record<string, any> = {}
-        const roundGuesses: any[] = []
-        const roundPoints: Record<string, number> = {}
-
-        const scoringPlayers = (currentIsSuddenDeath && (currentGameState.dueling_player_ids || []).length > 0)
-            ? currentPlayers.filter(p => (currentGameState.dueling_player_ids || []).includes(p.id))
-            : currentPlayers
-
-        scoringPlayers.forEach(p => {
-            // Calculate
-            const g = p.last_guess || { artist: '', title: '' }
-            const submittedRaw = p.submitted_at
-            const submittedAtMs = typeof submittedRaw === 'number'
-                ? submittedRaw
-                : submittedRaw
-                    ? new Date(submittedRaw).getTime()
-                    : null
-
-
-            const timeTaken = (submittedAtMs && roundStartMs)
-                ? Math.max(0, (submittedAtMs - roundStartMs) / 1000)
-                : totalTime
-            const clampedTimeTaken = Math.min(totalTime, timeTaken)
-            const timeLeftForPlayer = Math.max(0, totalTime - clampedTimeTaken)
-            const scoreData = calculateScore(
-                { artist: g.artist, title: g.title },
-                { artist: currentSong.artist_name, title: currentSong.track_name },
-                timeLeftForPlayer,
-                totalTime,
-                mode,
-                currentIsSuddenDeath // Pass sudden death flag
-            )
-
-            // Queue Updates
-            if (currentIsSuddenDeath) {
-                // SUDDEN DEATH: Update separate score, do NOT touch main score
-                const currentSD = p.sudden_death_score || 0
-                // In Sudden Death, use SD score
-                const earned = scoreData.points
-
-                // Update SD Score
-                const oldSD = p.sudden_death_score || 0
-                updates[`rooms/${code}/players/${p.id}/sudden_death_score`] = oldSD + earned
-
-                // DO NOT add to main score (Sudden Death is separate tie-breaker)
-                // updates[`rooms/${code}/players/${p.id}/score`] = (p.score || 0) + earned
-
-                roundPoints[p.id] = earned
-            } else {
-                // Normal Mode
-                updates[`rooms/${code}/players/${p.id}/score`] = (p.score || 0) + scoreData.points
-                roundPoints[p.id] = scoreData.points
+        if (gameState?.is_sudden_death) {
+            const remainingSongs = gameState.playlist.length - (gameState.current_round_index + 1)
+            if (remainingSongs <= 0) {
+                // Wait for SD top-up during reveal before proceeding.
+                return
             }
-
-            updates[`rooms/${code}/players/${p.id}/last_round_points`] = scoreData.points
-            updates[`rooms/${code}/players/${p.id}/last_round_correct_artist`] = scoreData.correctArtist
-            updates[`rooms/${code}/players/${p.id}/last_round_correct_title`] = scoreData.correctTitle
-            updates[`rooms/${code}/players/${p.id}/last_round_time_taken`] = clampedTimeTaken
-
-            roundGuesses.push({
-                user_id: p.id,
-                username: p.username,
-                avatar_url: p.avatar_url,
-                guess_title: g.title || '',
-                guess_artist: g.artist || '',
-                correct_title: scoreData.correctTitle,
-                correct_artist: scoreData.correctArtist,
-                is_correct: scoreData.correctTitle || scoreData.correctArtist,
-                points: scoreData.points,
-                time_taken: clampedTimeTaken
-            })
-        })
-
-        // 2. Update Game Phase to Reveal
-        updates[`rooms/${code}/game_state/phase`] = 'reveal'
-        updates[`rooms/${code}/game_state/reveal_start_time`] = serverTimestamp() as any
-        updates[`rooms/${code}/game_state/force_reveal_at`] = null
-
-        // 2.5 Persist Round History for Recap
-        updates[`rooms/${code}/round_history/${currentGameState.current_round_index}`] = {
-            round_index: currentGameState.current_round_index,
-            song_id: currentSong.id,
-            track_name: currentSong.track_name,
-            artist_name: currentSong.artist_name,
-            cover_url: currentSong.cover_url,
-            picked_by_user_id: currentSong.picked_by_user_id,
-            started_at: currentGameState.round_start_time || null,
-            ended_at: serverTimestamp() as any,
-            guesses: roundGuesses,
-            is_sudden_death: !!currentIsSuddenDeath
         }
 
-        await update(ref(db), updates)
-
-        // 3. Schedule Next Round or Finish
-        const updatedPlayers = currentPlayers.map(p => {
-            const pointsEarned = roundPoints[p.id] || 0
-            if (currentIsSuddenDeath) {
-                // FIXED: Do NOT add to main score. Only update SD score.
-                // Keeping 'score' as-is ensures getFirstTieGroup uses the original main score tiers.
-                return { ...p, sudden_death_score: (p.sudden_death_score || 0) + pointsEarned }
-            } else {
-                return { ...p, score: (p.score || 0) + pointsEarned }
-            }
-        })
+        hasScheduledNextRoundRef.current = true
 
         const revealMs = 5000
 
         setTimeout(async () => {
-            const nextIndex = currentGameState.current_round_index + 1
-            const totalSongs = currentGameState.playlist.length
+            const currentGameState = gameStateRef.current
+            const currentPlayers = playersRef.current
+            // Safety checks
+            if (!currentGameState || !currentPlayers) return
 
-            // SUDDEN DEATH: Check if we need more songs
-            if (currentIsSuddenDeath) {
-                const duelingIds = currentGameState.dueling_player_ids || []
-                const duelingPlayers = updatedPlayers.filter(p => duelingIds.includes(p.id))
+            const code = params.code as string
 
-
-                if (duelingPlayers.length >= 2) {
-                    // Sort by SUDDEN DEATH SCORE
-                    const sorted = [...duelingPlayers].sort((a, b) => (b.sudden_death_score || 0) - (a.sudden_death_score || 0))
-                    const leaderScore = sorted[0]?.sudden_death_score || 0
-                    const secondScore = sorted[1]?.sudden_death_score || 0
-                    const restScores = sorted.slice(1).map(p => p.sudden_death_score || 0)
-                    const restHasTie = restScores.length > 1 && new Set(restScores).size !== restScores.length
-
-
-                    // Win-by-2 rule
-                    if (leaderScore >= secondScore + 2 && !restHasTie) {
-                        const resolvedGroups = new Set(currentGameState.resolved_tie_groups || [])
-                        const finishedGroupKey = [...duelingIds].sort().join('|')
-                        if (finishedGroupKey) resolvedGroups.add(finishedGroupKey)
-
-                        const nextTieGroup = getFirstTieGroup(updatedPlayers, resolvedGroups)
-
-                        if (nextTieGroup.length > 1) {
-                            // Another tie exists! Start next duel
-                            await initiateSuddenDeath(code, nextTieGroup, currentGameState, updatedPlayers, Array.from(resolvedGroups))
-                            return
-                        } else {
-                            // No more ties -> Game Over. Clear SD flag.
-                            await update(ref(db, `rooms/${code}`), {
-                                status: 'finished',
-                                'game_state/phase': 'end',
-                                'game_state/end_time': Date.now(),
-                                'game_state/is_sudden_death': false,
-                                'game_state/resolved_tie_groups': Array.from(resolvedGroups)
-                            })
-                            return
-                        }
-                    } else {
-                        // Duel continues
-                    }
-                }
-            }
-
-            // Normal End of Game Check
-            const MAX_ROUNDS = roomSettings?.rounds || 5
-            if (currentGameState.current_round_index >= MAX_ROUNDS - 1 && !currentIsSuddenDeath) {
-                // Check for ties
-                const resolvedGroups = new Set(currentGameState.resolved_tie_groups || [])
-                const tieGroup = getFirstTieGroup(updatedPlayers, resolvedGroups)
-                if (tieGroup.length > 1) {
-                    await initiateSuddenDeath(code, tieGroup, currentGameState, updatedPlayers, Array.from(resolvedGroups))
-                } else {
-                    await update(ref(db, `rooms/${code}`), {
-                        status: 'finished',
-                        'game_state/phase': 'end',
-                        'game_state/end_time': Date.now()
-                    })
-                }
-            } else {
-                // Next Round (Normal or Sudden Death continues)
-                // If we are in SD and didn't trigger game over, we default here to next song
-                const nextRound = currentGameState.current_round_index + 1
-
-                await update(ref(db, `rooms/${code}`), {
-                    'game_state/phase': 'playing',
-                    'game_state/current_round_index': nextRound,
-                    'game_state/round_start_time': Date.now(),
-                    'game_state/force_reveal_at': null, // Clear any force reveal
-                    // Reset submissions
-                    ...Object.fromEntries(currentPlayers.map(p => [`players/${p.id}/has_submitted`, false])),
-                    ...Object.fromEntries(currentPlayers.map(p => [`players/${p.id}/last_guess`, null])),
-                    ...Object.fromEntries(currentPlayers.map(p => [`players/${p.id}/last_round_score`, 0])),
-                    ...Object.fromEntries(currentPlayers.map(p => [`players/${p.id}/last_round_correct_artist`, false])),
-                    ...Object.fromEntries(currentPlayers.map(p => [`players/${p.id}/last_round_correct_title`, false]))
-                })
-
-                // If SD, check if need more songs
-                if (currentIsSuddenDeath) {
-                    const remainingSongs = totalSongs - nextIndex
-                    const requiredBuffer = Math.max(2, (currentGameState.dueling_player_ids?.length || 2) * 2)
-
-                    // Fetch more if running low
-                    if (remainingSongs < requiredBuffer) {
-                        const fetched = await fetchMoreSuddenDeathSongs(code, currentGameState)
-                        if (!fetched) {
-                            console.warn('[SuddenDeath] Could not fetch more songs!')
-                        }
-                    }
-                }
-            }
+            await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
         }, revealMs)
+
+    }, [gameState?.phase, isHost]) // Runs when phase changes to reveal
+
+    // Sudden Death: fetch more songs during reveal (after results show)
+    useEffect(() => {
+        if (!isHost) return
+        if (!gameState || gameState.phase !== 'reveal') return
+        if (!gameState.is_sudden_death) return
+
+        if (sdTopUpRoundRef.current === gameState.current_round_index) return
+
+        const totalSongs = gameState.playlist.length
+        const remainingSongs = totalSongs - (gameState.current_round_index + 1)
+
+        if (remainingSongs > 0) return
+
+        sdTopUpRoundRef.current = gameState.current_round_index
+        fetchMoreSuddenDeathSongs(code, gameState)
+            .then((fetched) => {
+                if (!fetched) return
+                if (hasScheduledNextRoundRef.current) return
+
+                const revealMs = 5000
+                const startRaw = gameStateRef.current?.reveal_start_time
+                const startMs = typeof startRaw === 'number'
+                    ? startRaw
+                    : startRaw
+                        ? new Date(startRaw).getTime()
+                        : 0
+                const elapsed = startMs ? Date.now() - startMs : revealMs
+                const delay = Math.max(0, revealMs - elapsed)
+
+                hasScheduledNextRoundRef.current = true
+                setTimeout(async () => {
+                    const currentGameState = gameStateRef.current
+                    const currentPlayers = playersRef.current
+                    if (!currentGameState || !currentPlayers) return
+                    await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
+                }, delay)
+            })
+            .catch((e) => {
+                console.warn('[SuddenDeath] Could not fetch more songs (reveal top-up)', e)
+            })
+    }, [isHost, gameState?.phase, gameState?.is_sudden_death, gameState?.current_round_index, gameState?.playlist?.length, code])
+
+    const processReveal = async () => {
+        if (!isHost) return
+
+        // Prevention: Double Execution Lock
+        if (gameState && processingRoundRef.current === gameState.current_round_index) {
+            return
+        }
+
+        if (!gameState) return
+
+        const shouldShowRevealFetch = () => {
+            if (roomSettings?.mode !== 'lyrics_only') return false
+            if (!gameState) return false
+
+            if (gameState.is_sudden_death) {
+                const start = gameState.sudden_death_start_index ?? gameState.current_round_index
+                const sdRound = gameState.current_round_index - start
+                if (sdRound >= 0 && (sdRound + 1) % 5 === 0) return true
+                return false
+            }
+
+            const currentMissing = currentSong
+                ? (lyricsCacheRef.current[currentSong.id] === undefined || lyricsCacheRef.current[currentSong.id] === null)
+                : false
+
+            const nextSong = gameState.playlist?.[gameState.current_round_index + 1]
+            const nextMissing = nextSong
+                ? (lyricsCacheRef.current[nextSong.id] === undefined || lyricsCacheRef.current[nextSong.id] === null)
+                : false
+
+            return currentMissing || nextMissing
+        }
+
+        processingRoundRef.current = gameState.current_round_index
+        setIsRevealing(true) // Start loading UI
+        if (shouldShowRevealFetch()) {
+            setPendingRevealLyricsFetch(true)
+        }
+        setRevealError(null)
+
+        try {
+            const res = await fetch('/api/game/reveal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    roomCode: code,
+                    roundIndex: gameState.current_round_index
+                })
+            })
+
+            if (!res.ok) {
+                // If 404 or 500, throw to catch block
+                const errData = await res.json().catch(() => ({}))
+                throw new Error(errData.error || `Server returned ${res.status}`)
+            }
+
+        } catch (e: any) {
+            console.error('Reveal failed', e)
+            setRevealError(e.message || 'Reveal failed')
+            setPendingRevealLyricsFetch(false)
+            processingRoundRef.current = null // Reset lock if failed
+        } finally {
+            setIsRevealing(false) // Stop loading UI
+        }
     }
 
     // --------------------------------------------------------------------------------
@@ -845,6 +913,26 @@ export default function GamePage() {
                 <div style={{ fontSize: '1.8rem', opacity: 0.9, fontWeight: 600, textAlign: 'center', maxWidth: '600px' }}>
                     {duelingPlayers.length === 2 ? 'Head to Head' : 'Multi-Way Tie'} · First to break wins
                 </div>
+
+                {isLyricsOnly && (
+                    <div
+                        style={{
+                            marginTop: '20px',
+                            color: '#FFD700',
+                            fontSize: '1.2rem',
+                            fontWeight: 600,
+                            animation: 'pulse 1s infinite',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px'
+                        }}
+                    >
+                        <div className="animate-spin" style={{ width: '20px', height: '20px', border: '3px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                        FETCHING NEW SUDDEN DEATH LYRICS...
+                    </div>
+                )}
+
+
             </div>
         )
     }
@@ -865,6 +953,18 @@ export default function GamePage() {
                         {gameState.is_sudden_death && <span className="round-tag">Sudden Death</span>}
                         <span>Round {displayRound} / {roomSettings?.rounds}</span>
                     </div>
+                    {/* Inject Loading Indicator during Reveal only */}
+                    {showRevealLyricsFetch && isLyricsOnly && isReveal && (
+                        <div className="reveal-loading-pill" style={{
+                            background: 'rgba(255, 215, 0, 0.2)', color: '#FFD700',
+                            border: '1px solid rgba(255, 215, 0, 0.4)', padding: '4px 12px',
+                            borderRadius: '99px', fontSize: '0.8rem', fontWeight: 700,
+                            display: 'flex', alignItems: 'center', gap: '8px'
+                        }}>
+                            <div className="animate-spin" style={{ width: '12px', height: '12px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                            FETCHING NEW LYRICS...
+                        </div>
+                    )}
                     <div className={`timer-pill ${gameState.phase === 'playing' && timeLeft <= 3 ? 'countdown-pulse' : ''}`}>
                         {timeSynced ? Math.ceil(Math.max(0, timeLeft)) : '...'}
                     </div>
@@ -873,6 +973,27 @@ export default function GamePage() {
                     <ProgressBar current={timeSynced ? Math.max(0, timeLeft) : 0} total={roomSettings?.time || 15} />
                 </div>
             </div>
+
+            {/* ERROR OVERLAY FOR HOST */}
+            {revealError && isHost && (
+                <div style={{
+                    position: 'absolute', top: '80px', left: '50%', transform: 'translateX(-50%)',
+                    background: 'rgba(233, 20, 41, 0.9)', color: 'white', padding: '12px 24px',
+                    borderRadius: '12px', zIndex: 100, display: 'flex', alignItems: 'center', gap: '16px',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+                }}>
+                    <div style={{ fontWeight: 700 }}>
+                        Reveal Failed: {revealError}
+                    </div>
+                    <button
+                        className="btn-primary"
+                        style={{ padding: '6px 12px', fontSize: '0.8rem', height: 'auto' }}
+                        onClick={() => processReveal()}
+                    >
+                        Retry
+                    </button>
+                </div>
+            )}
 
             {/* Main Game Area */}
             <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: '10vh', paddingBottom: '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: 'hidden' }}>
@@ -927,14 +1048,19 @@ export default function GamePage() {
                                 <div style={{ fontWeight: 700, marginBottom: '10px', opacity: 0.9 }}>Round Results</div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     {displayPlayers.map(p => {
-                                        const correct = (p.last_round_correct_title || p.last_round_correct_artist)
+                                        const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
                                         return (
+
                                             <div key={p.id} style={{
                                                 display: 'flex', alignItems: 'center', gap: '12px',
                                                 padding: '8px 12px', borderRadius: '10px',
                                                 background: correct ? 'rgba(30, 215, 96, 0.08)' : 'rgba(233, 20, 41, 0.08)',
-                                                border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`
-                                            }}>
+                                                border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`,
+                                                cursor: 'pointer'
+                                            }}
+                                                onClick={(e) => openUserMenu(p, e)}
+                                                onContextMenu={(e) => openUserMenu(p, e)}
+                                            >
                                                 <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
                                                 <div style={{ flex: 1 }}>
                                                     <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</div>
@@ -1025,6 +1151,8 @@ export default function GamePage() {
             {/* In-Game Leaderboard */}
             <div className="game-leaderboard">
                 <div className="leaderboard-title">Leaderboard</div>
+                {/* This line was misplaced and malformed. Assuming it was meant to be a comment or a variable definition elsewhere. */}
+                {/* If 'updatedPlayers' is needed, define it in the component's logic, not directly in JSX like this. */}
                 {[...displayPlayers].sort((a, b) => {
                     // Primary: Main Score
                     if (b.score !== a.score) return b.score - a.score
@@ -1037,8 +1165,8 @@ export default function GamePage() {
                     // Check if correct during reveal
                     let resultClass = ''
                     if (isReveal && p.last_guess) {
-                        const correctTitle = p.last_round_correct_title ?? false
-                        const correctArtist = p.last_round_correct_artist ?? false
+                        const correctTitle = p.last_round_correct_title === true
+                        const correctArtist = p.last_round_correct_artist === true
                         const isCorrect = correctTitle || correctArtist
                         resultClass = isCorrect ? 'correct' : 'wrong'
                     }
@@ -1046,7 +1174,11 @@ export default function GamePage() {
                     return (
                         <div
                             key={p.id}
+
                             className={`player-card ${isSubmitter ? 'submitted' : ''} ${resultClass} ${isMe ? 'me' : ''}`}
+                            style={{ cursor: 'pointer' }}
+                            onClick={(e) => openUserMenu(p, e)}
+                            onContextMenu={(e) => openUserMenu(p, e)}
                         >
                             <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
                             <div style={{ flex: 1 }}>
@@ -1083,14 +1215,22 @@ export default function GamePage() {
                 ref={onAudioRefChange}
                 preload="auto"
                 style={{ display: 'none' }}
-                onError={(e) => {
-                    console.error('[Audio] Element Error:', e.currentTarget.error)
-                    // Try to force reload if generic error?
-                    // e.currentTarget.load() // Careful with infinite loops
-                }}
+                onError={handleAudioError}
             />
 
             <EmoteBar roomCode={code} />
-        </div>
+
+            {
+                selectedPlayer && (
+                    <UserPopover
+                        isOpen={!!selectedPlayer}
+                        targetUser={selectedPlayer}
+                        onClose={closeUserMenu}
+                        currentUserProfileId={profile?.id}
+                        anchorPoint={menuAnchor || undefined}
+                    />
+                )
+            }
+        </div >
     )
 }

@@ -88,7 +88,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
             {/* Buttons Bar */}
             <div className="glass-panel" style={{
                 position: 'fixed', right: '20px', top: '50%', transform: 'translateY(-50%)',
-                padding: '16px 8px', borderRadius: '50px', display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 100
+                padding: '12px 6px', borderRadius: '40px', display: 'flex', flexDirection: 'column', gap: '6px', zIndex: 100
             }}>
                 {emotes.length === 0 && <span style={{ color: '#888', fontSize: '0.8rem', padding: '0 8px' }}>No emotes</span>}
 
@@ -99,12 +99,12 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
                         style={{
                             background: 'transparent', border: 'none',
                             cursor: 'pointer', transition: 'transform 0.1s',
-                            padding: '4px'
+                            padding: '2px'
                         }}
                         onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.2)'}
                         onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
                     >
-                        <img src={src} alt="emote" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
+                        <img src={src} alt="emote" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
                     </button>
                 ))}
             </div>
