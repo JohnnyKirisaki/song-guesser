@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase'
-import { ref, update } from 'firebase/database'
+import { ref, update, serverTimestamp } from 'firebase/database'
 import { GameState } from './game-logic'
 import { initiateSuddenDeath } from './sudden-death'
 
@@ -114,7 +114,8 @@ export async function processNextRound(
         await update(ref(db, `rooms/${roomCode}`), {
             'game_state/phase': 'playing',
             'game_state/current_round_index': nextRound,
-            'game_state/round_start_time': Date.now(),
+            // Use server time so all clients share the same reference.
+            'game_state/round_start_time': serverTimestamp() as any,
             'game_state/force_reveal_at': null, // Clear any force reveal
             // Reset submissions
             ...Object.fromEntries(players.map(p => [`players/${p.id}/has_submitted`, false])),

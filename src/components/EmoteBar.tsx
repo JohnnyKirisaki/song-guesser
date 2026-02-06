@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { db } from '@/lib/firebase'
 import { ref, push, onChildAdded, serverTimestamp } from 'firebase/database'
 
@@ -14,6 +14,10 @@ type Reaction = {
 export default function EmoteBar({ roomCode }: { roomCode: string }) {
     const [emotes, setEmotes] = useState<string[]>([])
     const [reactions, setReactions] = useState<Reaction[]>([])
+    const lastAddAtRef = useRef(0)
+
+    const MAX_REACTIONS = 40
+    const MIN_REACTION_INTERVAL_MS = 50
 
     // Load available emotes from API
     useEffect(() => {
@@ -55,11 +59,21 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
     }, [roomCode])
 
     const addReaction = (src: string) => {
+        const now = Date.now()
+        if (now - lastAddAtRef.current < MIN_REACTION_INTERVAL_MS) return
+        lastAddAtRef.current = now
+
         const id = Math.random().toString(36).substr(2, 9)
         const x = Math.random() * 80 + 10 // 10% to 90% width
         const y = Math.random() * 20 + 70 // 70% to 90% height
 
-        setReactions(prev => [...prev, { id, src, x, y }])
+        setReactions(prev => {
+            const next = [...prev, { id, src, x, y }]
+            if (next.length > MAX_REACTIONS) {
+                return next.slice(next.length - MAX_REACTIONS)
+            }
+            return next
+        })
 
         // Remove after animation
         setTimeout(() => {

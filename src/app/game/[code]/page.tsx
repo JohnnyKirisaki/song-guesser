@@ -116,6 +116,7 @@ export default function GamePage() {
     const sdTopUpRoundRef = useRef<number | null>(null)
     const latestGuessRef = useRef({ artist: '', title: '' }) // Latest text input
     const hasSubmittedRef = useRef(false) // Ref for sync logic to avoid stale closure
+    const roomSettingsRef = useRef<any>(null)
     const titleInputRef = useRef<HTMLInputElement | null>(null)
     const artistInputRef = useRef<HTMLInputElement | null>(null)
     const lyricsCacheRef = useRef<Record<string, string | null>>({})
@@ -218,75 +219,97 @@ export default function GamePage() {
     useEffect(() => {
         const roomRef = ref(db, `rooms/${code}`)
 
-        const unsubscribe = onValue(roomRef, (snapshot) => {
-            const data = snapshot.val()
-            if (!data) {
+        // One-time room existence check (avoid reacting to every child write like reactions)
+        get(roomRef).then((snapshot) => {
+            if (!snapshot.exists()) {
                 router.push('/')
+            }
+        })
+
+        const settingsRef = ref(db, `rooms/${code}/settings`)
+        const playersRefDb = ref(db, `rooms/${code}/players`)
+        const gameStateRefDb = ref(db, `rooms/${code}/game_state`)
+        const statusRef = ref(db, `rooms/${code}/status`)
+
+        const unsubscribeSettings = onValue(settingsRef, (snapshot) => {
+            if (!snapshot.exists()) return
+            const settings = snapshot.val()
+            roomSettingsRef.current = settings
+            setRoomSettings(settings)
+        })
+
+        const unsubscribePlayers = onValue(playersRefDb, (snapshot) => {
+            if (!snapshot.exists()) {
+                setPlayers([])
                 return
             }
 
-            setRoomSettings(data.settings)
+            const pList = Object.values(snapshot.val()) as Player[]
+            setPlayers(pList)
 
-            // Sync Players
-            if (data.players) {
-                const pList = Object.values(data.players) as Player[]
-                setPlayers(pList)
+            // Sync personal score & submission status
+            const me = pList.find(p => p.id === profile.id)
+            if (me) {
+                setTotalScore(me.score)
 
-                // Sync personal score & submission status
-                const me = pList.find(p => p.id === profile.id)
-                if (me) {
-                    setTotalScore(me.score)
-
-                    // Initial Sync / Reconnect Protection (Use ref to avoid stale closure)
-                    if (me.has_submitted && !hasSubmittedRef.current) {
-                        setHasSubmitted(true)
-                    }
+                // Initial Sync / Reconnect Protection (Use ref to avoid stale closure)
+                if (me.has_submitted && !hasSubmittedRef.current) {
+                    setHasSubmitted(true)
                 }
             }
-
-            // Sync Game State
-            if (data.game_state) {
-                const serverState = data.game_state
-                setGameState(serverState)
-
-                // Timer Sync
-                if (serverState.phase === 'playing' && serverState.round_start_time) {
-                    const startRaw = serverState.round_start_time
-                    const startMs = typeof startRaw === 'number'
-                        ? startRaw
-                        : new Date(startRaw).getTime()
-
-                    const totalTime = data.settings.time || 15
-
-                    if (!Number.isNaN(startMs)) {
-                        const elapsed = (Date.now() - startMs) / 1000
-                        const remaining = Math.max(0, totalTime - elapsed) // FLOAT for smooth bar
-
-                        const forceRaw = serverState.force_reveal_at
-                        if (forceRaw) {
-                            const forceMs = typeof forceRaw === 'number'
-                                ? forceRaw
-                                : new Date(forceRaw).getTime()
-                            const forceRemaining = Math.max(0, (forceMs - Date.now()) / 1000)
-                            setTimeLeft(Math.min(remaining, forceRemaining))
-                        } else {
-                            setTimeLeft(remaining)
-                        }
-                    } else {
-                        setTimeLeft(totalTime)
-                    }
-                }
-
-                if (serverState.phase === 'reveal') {
-                    setTimeLeft(0)
-                }
-            }
-
-            setStatus(data.status)
         })
 
-        return () => unsubscribe()
-    }, [code, router, profile.id])
+        const unsubscribeGameState = onValue(gameStateRefDb, (snapshot) => {
+            if (!snapshot.exists()) return
+            const serverState = snapshot.val()
+            setGameState(serverState)
+
+            // Timer Sync
+            if (serverState.phase === 'playing' && serverState.round_start_time) {
+                const startRaw = serverState.round_start_time
+                const startMs = typeof startRaw === 'number'
+                    ? startRaw
+                    : new Date(startRaw).getTime()
+
+                const totalTime = roomSettingsRef.current?.time || 15
+
+                if (!Number.isNaN(startMs)) {
+                    const now = Date.now() + serverTimeOffset
+                    const elapsed = (now - startMs) / 1000
+                    const remaining = Math.max(0, totalTime - elapsed) // FLOAT for smooth bar
+
+                    const forceRaw = serverState.force_reveal_at
+                    if (forceRaw) {
+                        const forceMs = typeof forceRaw === 'number'
+                            ? forceRaw
+                            : new Date(forceRaw).getTime()
+                        const forceRemaining = Math.max(0, (forceMs - now) / 1000)
+                        setTimeLeft(Math.min(remaining, forceRemaining))
+                    } else {
+                        setTimeLeft(remaining)
+                    }
+                } else {
+                    setTimeLeft(totalTime)
+                }
+            }
+
+            if (serverState.phase === 'reveal') {
+                setTimeLeft(0)
+            }
+        })
+
+        const unsubscribeStatus = onValue(statusRef, (snapshot) => {
+            if (!snapshot.exists()) return
+            setStatus(snapshot.val())
+        })
+
+        return () => {
+            unsubscribeSettings()
+            unsubscribePlayers()
+            unsubscribeGameState()
+            unsubscribeStatus()
+        }
+    }, [code, router, profile.id, serverTimeOffset])
 
     // Track hasSubmitted in ref to avoid stale closure in listener
     useEffect(() => {
@@ -690,14 +713,15 @@ export default function GamePage() {
         if (allSubmitted && activePlayers.length > 0) {
             if (timeLeft > 3 && !gameState.force_reveal_at) {
                 // Force a short 3-second countdown
+                const serverNow = Date.now() + serverTimeOffset
                 update(ref(db, `rooms/${code}/game_state`), {
-                    force_reveal_at: Date.now() + 3000
+                    force_reveal_at: serverNow + 3000
                 })
             } else if (timeLeft <= 0 && !revealError) {
                 processReveal()
             }
         }
-    }, [players, isHost, gameState?.phase, timeLeft, gameState?.force_reveal_at, gameState?.is_sudden_death, gameState?.dueling_player_ids, revealError]) // Listen to players update
+    }, [players, isHost, gameState?.phase, timeLeft, gameState?.force_reveal_at, gameState?.is_sudden_death, gameState?.dueling_player_ids, revealError, serverTimeOffset]) // Listen to players update
 
     // Keep a ref to players to avoid stale closures in timers
     useEffect(() => {
