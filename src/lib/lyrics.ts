@@ -31,7 +31,7 @@ export async function fetchLyrics(artist: string, title: string): Promise<string
             if (!lyrics) return null
             if (lyrics.includes("Lyrics unavailable for this song.")) return null
 
-            // Process lyrics to get a snippet (first 5 lines)
+            // Process lyrics to get a snippet (random 5-line window)
             const rawLines = lyrics
                 .split('\n')
                 .map(line => line.trim())
@@ -51,7 +51,9 @@ export async function fetchLyrics(artist: string, title: string): Promise<string
             if (lines.length < 5) lines = cleanedNoTimestamps
             if (lines.length < 5) lines = cleanedRaw
 
-            const snippet = lines.slice(0, 5).join('\n')
+            const startMax = Math.max(0, lines.length - 5)
+            const startIndex = startMax > 0 ? Math.floor(Math.random() * (startMax + 1)) : 0
+            const snippet = lines.slice(startIndex, startIndex + 5).join('\n')
             return snippet || null
 
         } catch (error: any) {
