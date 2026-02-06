@@ -4,6 +4,7 @@ export type ScoringMode = 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'ly
 
 // Minimal cleanup for Search Queries (keep special chars that might avail in search)
 export function normalizeForSearch(str: string): string {
+    // Redeploy force update
     return str.toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
