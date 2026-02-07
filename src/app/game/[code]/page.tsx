@@ -559,11 +559,14 @@ export default function GamePage() {
             const matchExp = previewToUse.match(/exp=(\d+)/)
             const expTime = matchExp ? parseInt(matchExp[1]) : 0
 
-            // If expired or about to expire (within 60s), refresh it
-            if (expTime > 0 && expTime < nowSeconds + 60) {
-                if (canRetry) {
-                    audioRetryRef.current[retryKey] = Date.now() // prevent infinite loop
+            const isExpired = expTime > 0 && expTime < nowSeconds
+            const isExpiringSoon = expTime > 0 && expTime < nowSeconds + 60
 
+            // 1. If TOTALLY expired, we MUST refresh and cannot play yet
+            if (isExpired) {
+                if (canRetry) {
+                    console.log('[Audio] Token expired, refreshing...', retryKey)
+                    audioRetryRef.current[retryKey] = Date.now()
                     resolvePreviewForSong(currentSong)
                         .then((newUrl) => {
                             if (newUrl) {
@@ -572,15 +575,29 @@ export default function GamePage() {
                                 console.error('[Audio] Refresh failed: No URL returned')
                             }
                         })
-                        .catch(e => {
-                            console.error('[Audio] Refresh Error:', e)
-                        })
-
-                    return // Wait for async refresh
+                        .catch(e => console.error('[Audio] Refresh Error:', e))
+                    return
                 } else {
                     console.warn('[Audio] Token expired and already retried. Skipping playback.')
-                    return
+                    return // Give up
                 }
+            }
+
+            // 2. If just "expiring soon", trigger refresh in background BUT play current url anyway
+            if (isExpiringSoon && canRetry) {
+                console.log('[Audio] Token expiring soon, refreshing in background...', retryKey)
+                audioRetryRef.current[retryKey] = Date.now()
+                resolvePreviewForSong(currentSong)
+                    .then((newUrl) => {
+                        // If we get a new URL, we update the override so NEXT time we use it
+                        // We do NOT forcibly stop/restart the current audio because seamless playback is better
+                        // But if the current one fails, the error handler will pick up this new override
+                        if (newUrl) {
+                            console.log('[Audio] Background refresh success')
+                        }
+                    })
+                    .catch(e => console.error('[Audio] Background Refresh Error:', e))
+                // FALL THROUGH to playUrl below!
             }
 
             playUrl(previewToUse)

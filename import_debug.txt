@@ -601,3 +601,81 @@ Guaranteed Failures: 1
        Reasons: Exact title match
 --------------------------------------------------
 
+Batch Results (25 tracks) - 2026-02-07T14:59:49.826Z
+Guaranteed Failures: 1
+--------------------------------------------------
+[FAILED] "Too Much Sauce" by "Harry Styles"
+  Album: Too Much Sauce
+  Error: Exact title match, Album match, Artist mismatch
+  Queries Tried:
+    artist:"Harry Styles" track:"Too Much Sauce"
+    artist:"Harry Styles" track:"Too Much Sauce"
+    "Harry Styles" "Too Much Sauce"
+    artist:"Harry Styles" track:"Too Much Sauce"
+    "Harry Styles" "Too Much Sauce"
+    Harry Styles Too Much Sauce
+    "Harry Styles Too Much Sauce"
+    "Harry Styles" "Too Much Sauce"
+    Harry Styles Too Much Sauce
+    Harry Styles Too Much Sauce
+    artist:"harry styles" track:"too much sauce"
+    artist:"harry styles" track:"too much sauce"
+    harry styles too much sauce
+    harry styles too much sauce
+    too much sauce
+  Candidates Found (50):
+    1. "Too Much Sauce" by "Phil J."
+       Score: 50
+       Link: https://www.deezer.com/track/386709581
+       Reasons: Exact title match, Album match
+    2. "Too Much Sauce" by "Future"
+       Score: 40
+       Link: https://www.deezer.com/track/134079734
+       Reasons: Exact title match
+    3. "Too Much Sauce" by "Sauce Walka"
+       Score: 40
+       Link: https://www.deezer.com/track/140158393
+       Reasons: Exact title match
+    4. "Too Much Sauce" by "Chloe x Halle"
+       Score: 40
+       Link: https://www.deezer.com/track/366459851
+       Reasons: Exact title match
+    5. "Too Much Sauce" by "BAKEY"
+       Score: 40
+       Link: https://www.deezer.com/track/2500719401
+       Reasons: Exact title match
+--------------------------------------------------
+
+Batch Results (25 tracks) - 2026-02-07T14:59:50.006Z
+Guaranteed Failures: 1
+--------------------------------------------------
+[FAILED] "fantasize" by "Ariana Grande"
+  Album: fantasize
+  Error: Exact title match, Album match, Artist mismatch
+  Queries Tried:
+    artist:"Ariana Grande" track:"fantasize"
+    artist:"Ariana Grande" track:"fantasize"
+    "Ariana Grande" "fantasize"
+  Candidates Found (50):
+    1. "fantasize" by "Cutie Pie"
+       Score: 50
+       Link: https://www.deezer.com/track/3489439711
+       Reasons: Exact title match, Album match
+    2. "7 rings" by "Ariana Grande"
+       Score: 35
+       Link: https://www.deezer.com/track/629899842
+       Reasons: Exact artist match, High popularity
+    3. "needy" by "Ariana Grande"
+       Score: 35
+       Link: https://www.deezer.com/track/629899762
+       Reasons: Exact artist match, High popularity
+    4. "Dangerous Woman" by "Ariana Grande"
+       Score: 35
+       Link: https://www.deezer.com/track/1375215222
+       Reasons: Exact artist match, High popularity
+    5. "we can't be friends (wait for your love)" by "Ariana Grande"
+       Score: 35
+       Link: https://www.deezer.com/track/2690050002
+       Reasons: Exact artist match, High popularity
+--------------------------------------------------
+
