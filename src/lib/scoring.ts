@@ -42,7 +42,10 @@ function stripTitleExtras(str: string): string {
 }
 
 const STOP_WORDS = new Set([
-    'the', 'a', 'an', 'of', 'and', 'or', 'to', 'in', 'on', 'at', 'for', 'from', 'by', 'with'
+    'the', 'a', 'an', 'of', 'and', 'or', 'to', 'in', 'on', 'at', 'for', 'from', 'by', 'with',
+    // Portuguese
+    'o', 'a', 'os', 'as', 'um', 'uma', 'uns', 'umas',
+    'do', 'da', 'dos', 'das', 'no', 'na', 'nos', 'nas', 'em', 'de', 'para', 'por', 'com', 'sem', 'sob'
 ])
 
 function removeStopWords(normalized: string): string {
@@ -280,9 +283,12 @@ export function scoreTrackMatch(source: TrackSource, candidate: TrackCandidate):
     const hasCandTags = candTags.length > 0
 
     // Check strict version mismatch
+    // Check strict version mismatch
     if (!hasSourceTags && hasCandTags) {
         // Source is generic, Candidate is "Remix" -> Penalty
-        score -= 35
+        // Reduced from -35 to -20 to allow remixes if they are the only option
+        // (Score 70 - 20 = 50 > 40 threshold)
+        score -= 20
         reasons.push(`Unexpected version tags: ${candTags.join(',')}`)
     } else if (hasSourceTags) {
         // Source IS a specific version, Candidate MUST match at least one
@@ -336,16 +342,20 @@ export function isMatch(guess: string, answer: string, isArtist: boolean = false
     const normAnswer = removeStopWords(normalizeForCompare(isArtist ? trimmedAnswer : stripTitleExtras(trimmedAnswer)))
 
     if (isArtist) {
-        // Split comma separated artists
+        // 1. Check full answer match (for groups like "Florence + The Machine")
+        // Use Jaccard for "bag of words" match (handles order/missing stop words)
+        // Threshold 0.75 ensures "Harry" (0.5) doesn't match "Harry Styles", but "Florence The Machine" (0.75+) matches
+        if (getJaccardSimilarity(normGuess, normAnswer) >= 0.75) return true
+        if (levenshtein(normGuess, normAnswer) <= 1) return true
+
+        // 2. Check individual artists (for "Timbaland & OneRepublic")
         const answerArtists = splitArtists(answer)
-        const match = answerArtists.some(artist => {
-            if (artist === normGuess) return true
-            if (artist.includes(normGuess) && normGuess.length > 3) return true
-            if (normGuess.includes(artist) && artist.length > 3) return true
+        return answerArtists.some(artist => {
+            // Strict match for individual artists too
+            if (getJaccardSimilarity(normGuess, artist) >= 0.75) return true
             if (levenshtein(normGuess, artist) <= 1) return true
             return false
         })
-        return match
     }
 
     // Songs

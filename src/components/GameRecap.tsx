@@ -6,7 +6,9 @@ import { useRouter } from 'next/navigation'
 import { soundManager } from '@/lib/sounds'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
-import { ref, get, remove } from 'firebase/database'
+import { ref, get, remove, set, onValue, update } from 'firebase/database'
+import { generateRoomCode } from '@/lib/game-utils'
+import UserPopover from './UserPopover'
 
 type Player = {
     id: string
@@ -14,6 +16,7 @@ type Player = {
     avatar_url: string
     score: number
     sudden_death_score?: number
+    is_host?: boolean
 }
 
 type RoundGuess = {
@@ -54,17 +57,89 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     const [winner, setWinner] = useState<Player | null>(null)
     const [isDraw, setIsDraw] = useState(false)
     const [drawPlayers, setDrawPlayers] = useState<Player[]>([])
+    const [selectedUser, setSelectedUser] = useState<Player | null>(null)
+    const [popoverAnchor, setPopoverAnchor] = useState<{ x: number, y: number } | null>(null)
+    const [nextRoomCode, setNextRoomCode] = useState<string | null>(null)
+    const [creatingRoom, setCreatingRoom] = useState(false)
+
+    // Listen for Play Again (Next Room)
+    useEffect(() => {
+        const nextRoomRef = ref(db, `rooms/${roomCode}/next_room_code`)
+        const unsub = onValue(nextRoomRef, (snap) => {
+            if (snap.exists()) {
+                const code = snap.val()
+                setNextRoomCode(code)
+                // Auto-redirect everyone
+                router.push(`/room/${code}`)
+            }
+        })
+        return () => unsub()
+    }, [roomCode, router])
+
+    const handleAvatarClick = (player: Player, e: React.MouseEvent) => {
+        e.stopPropagation()
+        if (player.id === profile?.id) return
+        setPopoverAnchor({ x: e.clientX, y: e.clientY })
+        setSelectedUser(player)
+    }
+
+    const handlePlayAgain = async () => {
+        if (!profile) return
+        try {
+            setCreatingRoom(true)
+            const newCode = generateRoomCode()
+
+            // Get current settings to clone
+            const currentRoomRef = ref(db, `rooms/${roomCode}`)
+            const snap = await get(currentRoomRef)
+            const currentData = snap.exists() ? snap.val() : {}
+            const settings = currentData.settings || { rounds: 10, time: 15, mode: 'normal' }
+
+            const roomData = {
+                code: newCode,
+                host_id: profile.id,
+                status: 'waiting',
+                created_at: new Date().toISOString(),
+                settings: settings,
+                players: {
+                    [profile.id]: {
+                        id: profile.id,
+                        username: profile.username,
+                        avatar_url: profile.avatar_url,
+                        score: 0,
+                        is_ready: false,
+                        is_host: true
+                    }
+                }
+            }
+
+            // Create new room
+            await set(ref(db, `rooms/${newCode}`), roomData)
+
+            // Notify everyone in current room
+            await update(ref(db, `rooms/${roomCode}`), {
+                next_room_code: newCode
+            })
+
+            // Redirect is handled by the useEffect above
+
+        } catch (e) {
+            console.error("Failed to create next room", e)
+            setCreatingRoom(false)
+        }
+    }
 
     useEffect(() => {
         soundManager.play('win')
     }, [])
 
     useEffect(() => {
+
         const fetchStats = async () => {
             const fallbackStats: StatItem[] = [
-                { label: 'Most Guessed', value: 'No valid answers', icon: Music, color: '#1ed760' },
+                { label: 'Most Correctly Guessed', value: 'No valid answers', icon: Music, color: '#1ed760' },
                 { label: 'Hardest Song', value: 'No valid answers', icon: Zap, color: '#e91429' },
-                { label: 'Fastest Guess', value: 'No valid answers', icon: Clock, color: '#3b82f6' }
+                { label: 'Fastest Correct Guess', value: 'No valid answers', icon: Clock, color: '#3b82f6' }
             ]
 
             try {
@@ -88,7 +163,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                 const formatSong = (song: RoundHistory) => `${song.track_name} - ${song.artist_name}`
 
-                // 1. Most guessed song
+                // 1. Most Correctly Guessed song
                 const songCounts: Record<string, { count: number, song: RoundHistory }> = {}
                 // 2. Hardest song (lowest correct %)
                 const songAttempts: Record<string, { total: number, correct: number, song: RoundHistory }> = {}
@@ -143,7 +218,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                 if (mostGuessed && mostGuessed.count > 0) {
                     newStats.push({
-                        label: 'Most Guessed',
+                        label: 'Most Correctly Guessed',
                         value: formatSong(mostGuessed.song),
                         subValue: `${mostGuessed.count} correct guesses`, // Changed from 'perfect' to 'correct' to be generic
                         icon: Music,
@@ -163,7 +238,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                 if (fastestGuess) {
                     newStats.push({
-                        label: 'Fastest Guess',
+                        label: 'Fastest Correct Guess',
                         value: fastestGuess.guess.username,
                         subValue: `${formatSong(fastestGuess.song)} in ${fastestGuess.guess.time_taken.toFixed(1)} s`,
                         icon: Clock,
@@ -181,9 +256,9 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
             } catch (e) {
                 console.error('Failed to fetch recap stats', e)
                 setStats([
-                    { label: 'Most Guessed', value: 'No valid answers', icon: Music, color: '#1ed760' },
+                    { label: 'Most Correctly Guessed', value: 'No valid answers', icon: Music, color: '#1ed760' },
                     { label: 'Hardest Song', value: 'No valid answers', icon: Zap, color: '#e91429' },
-                    { label: 'Fastest Guess', value: 'No valid answers', icon: Clock, color: '#3b82f6' }
+                    { label: 'Fastest Correct Guess', value: 'No valid answers', icon: Clock, color: '#3b82f6' }
                 ])
                 setLoading(false)
             }
@@ -252,6 +327,9 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
         return () => clearTimeout(cleanupTimer)
     }, [roomCode])
 
+    // Find if I am host
+    const amIHost = players.find(p => p.id === profile?.id)?.is_host ?? false
+
     if (loading) return <div className="flex-center" style={{ height: '100vh', color: 'white' }}>Building recap...</div>
 
     const sortedPlayers = [...players].sort((a, b) => {
@@ -274,7 +352,10 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
                         {drawPlayers.map(p => (
                             <div key={p.id} className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '200px', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)' }}>
-                                <div style={{ width: '120px', height: '120px', minWidth: '120px', minHeight: '120px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #FFD700', marginBottom: '12px' }}>
+                                <div
+                                    style={{ width: '120px', height: '120px', minWidth: '120px', minHeight: '120px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #FFD700', marginBottom: '12px', cursor: 'pointer' }}
+                                    onClick={(e) => handleAvatarClick(p, e)}
+                                >
                                     <img src={p.avatar_url} style={podiumAvatarStyle} />
                                 </div>
                                 <h2 style={{ marginBottom: '8px' }}>{p.username}</h2>
@@ -287,7 +368,10 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '48px' }}>
                     {winners[1] && (
                         <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '340px', justifyContent: 'flex-end', animationDelay: '200ms' }}>
-                            <div style={{ width: '110px', height: '110px', minWidth: '110px', minHeight: '110px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '12px' }}>
+                            <div
+                                style={{ width: '110px', height: '110px', minWidth: '110px', minHeight: '110px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '12px', cursor: 'pointer' }}
+                                onClick={(e) => handleAvatarClick(winners[1], e)}
+                            >
                                 <img src={winners[1].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <h2 style={{ marginBottom: '8px' }}>{winners[1].username}</h2>
@@ -298,7 +382,10 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                     {winners[0] && (
                         <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '460px', justifyContent: 'flex-end', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)', order: -1, zIndex: 10 }}>
-                            <div style={{ width: '160px', height: '160px', minWidth: '160px', minHeight: '160px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '16px' }}>
+                            <div
+                                style={{ width: '160px', height: '160px', minWidth: '160px', minHeight: '160px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '16px', cursor: 'pointer' }}
+                                onClick={(e) => handleAvatarClick(winners[0], e)}
+                            >
                                 <img src={winners[0].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <div style={{ background: '#FFD700', color: 'black', padding: '4px 12px', borderRadius: '20px', fontWeight: 'bold', marginBottom: '16px' }}>
@@ -311,7 +398,10 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                     {winners[2] && (
                         <div className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: '280px', justifyContent: 'flex-end', animationDelay: '400ms' }}>
-                            <div style={{ width: '100px', height: '100px', minWidth: '100px', minHeight: '100px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '12px' }}>
+                            <div
+                                style={{ width: '100px', height: '100px', minWidth: '100px', minHeight: '100px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '12px', cursor: 'pointer' }}
+                                onClick={(e) => handleAvatarClick(winners[2], e)}
+                            >
                                 <img src={winners[2].avatar_url} style={podiumAvatarStyle} />
                             </div>
                             <h2 style={{ marginBottom: '8px' }}>{winners[2].username}</h2>
@@ -336,9 +426,35 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                 ))}
             </div>
 
-            <button onClick={() => router.push('/')} className="btn-primary">
-                Back to Lobby
-            </button>
+            {amIHost ? (
+                <div style={{ display: 'flex', gap: '16px' }}>
+                    <button onClick={() => router.push('/')} className="btn-glass">
+                        Home
+                    </button>
+                    <button onClick={handlePlayAgain} className="btn-primary" disabled={creatingRoom}>
+                        {creatingRoom ? 'Creating...' : 'Play Again'}
+                    </button>
+                </div>
+            ) : (
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                    <button onClick={() => router.push('/')} className="btn-glass">
+                        Leave
+                    </button>
+                    <div style={{ color: '#888', fontStyle: 'italic' }}>
+                        {nextRoomCode ? 'Joining next game...' : 'Waiting for host...'}
+                    </div>
+                </div>
+            )}
+
+            {selectedUser && (
+                <UserPopover
+                    isOpen={!!selectedUser}
+                    targetUser={selectedUser}
+                    onClose={() => setSelectedUser(null)}
+                    currentUserProfileId={profile?.id}
+                    anchorPoint={popoverAnchor || undefined}
+                />
+            )}
         </div>
     )
 }

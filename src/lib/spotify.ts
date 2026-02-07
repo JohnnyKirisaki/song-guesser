@@ -1,3 +1,4 @@
+
 import { db } from '@/lib/firebase'
 import { ref, update, push, child } from 'firebase/database'
 import { isMatch } from '@/lib/scoring'
@@ -13,18 +14,18 @@ export type SpotifyTrack = {
 }
 
 // Helper: Resolve via new Server API (Deezer)
-async function resolveViaServer(metadata: any[]): Promise<SpotifyTrack[]> {
+async function resolveViaServer(metadata: any[], clearLog: boolean = false): Promise<SpotifyTrack[]> {
     try {
         const res = await fetch('/api/resolve-tracks', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tracks: metadata })
+            body: JSON.stringify({ tracks: metadata, clearLog })
         })
         const data = await res.json()
 
         if (!res.ok) throw new Error(data.error || 'Resolution failed')
 
-            return data.tracks
+        return data.tracks
             .filter((t: any) => t.resolved && t.deezer)
             .map((t: any) => ({
                 uri: t.deezer.id,
@@ -39,7 +40,7 @@ async function resolveViaServer(metadata: any[]): Promise<SpotifyTrack[]> {
     }
 }
 
-type TrackMeta = { artist: string, title: string }
+type TrackMeta = { artist: string, title: string, album?: string, year?: string, isrc?: string }
 
 async function resolveViaServerBatched(
     metadata: TrackMeta[],
@@ -57,7 +58,8 @@ async function resolveViaServerBatched(
 
     for (let i = 0; i < metadata.length; i += chunkSize) {
         const chunk = metadata.slice(i, i + chunkSize)
-        const resolved = await resolveViaServer(chunk)
+        // Clear log only on the FIRST chunk
+        const resolved = await resolveViaServer(chunk, i === 0)
         results.push(...resolved)
         processed += chunk.length
         const pct = Math.min(100, Math.round((processed / total) * 100))
@@ -116,9 +118,13 @@ export async function fetchSpotifyData(
         // 2. Resolve via Server (Deezer) - Shuffle but DO NOT limit
         const selectedMetadata = shuffleArray(allTracks)
         onProgress?.(20)
+        // Map new metadata fields
         const resolved = await resolveViaServerBatched(selectedMetadata.map((t: any) => ({
-            artist: t.artist,
-            title: t.name || t.title || ''
+            artist: t.artist ?? '',
+            title: t.name ?? '',
+            album: t.album,
+            year: t.year,
+            isrc: t.isrc
         })), (progress) => {
             onProgress?.(20 + Math.round(progress * 0.8))
         })

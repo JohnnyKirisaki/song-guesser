@@ -72,7 +72,7 @@ export async function POST(request: Request) {
             // Fetch Playlist Tracks (Pagination)
             let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${resourceId}/tracks?limit=50`
 
-            while (nextUrl && allItems.length < 500) {
+            while (nextUrl && allItems.length < 2000) {
                 const playlistRes: Response = await fetch(nextUrl, {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 })
@@ -148,7 +148,7 @@ export async function POST(request: Request) {
             // Fetch Album Tracks
             let nextUrl: string | null = `https://api.spotify.com/v1/albums/${resourceId}/tracks?limit=50`
 
-            while (nextUrl && allItems.length < 500) {
+            while (nextUrl && allItems.length < 2000) {
                 const albumRes: Response = await fetch(nextUrl, {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 })
@@ -195,9 +195,20 @@ export async function POST(request: Request) {
         // 4. Simplify Data
         const tracks = allItems.map((item: any) => {
             if (!item.track) return null
+            const t = item.track
+
+            // Debug Log for specific tracks to check ISRC availability
+            if (!t.external_ids?.isrc && t.name) {
+                console.log(`[API] Missing ISRC for: ${t.name} by ${t.artists[0]?.name}`)
+                console.log(`[API] External IDs:`, t.external_ids)
+            }
+
             return {
-                name: item.track.name,
-                artist: item.track.artists[0]?.name
+                name: t.name,
+                artist: t.artists[0]?.name,
+                album: t.album?.name,
+                year: t.album?.release_date?.split('-')[0],
+                isrc: t.external_ids?.isrc
             }
         }).filter((t: any) => t && t.name && t.artist)
 

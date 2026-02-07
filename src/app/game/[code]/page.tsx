@@ -58,6 +58,9 @@ export default function GamePage() {
     const [serverTimeOffset, setServerTimeOffset] = useState(0)
     const [isRevealing, setIsRevealing] = useState(false) // New state for API call loading
     const [revealError, setRevealError] = useState<string | null>(null) // Capture API/Network errors
+    const [audioStatus, setAudioStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle')
+    const [audioLoadError, setAudioLoadError] = useState<boolean>(false)
+    const [isBulletRound, setIsBulletRound] = useState(false)
 
     const { volume } = useVolume()
     const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
@@ -475,6 +478,8 @@ export default function GamePage() {
                         .catch((err) => {
                             console.error('[Audio] Playback failed:', err)
                             setIsPlaying(false)
+                            setAudioStatus('error')
+                            setAudioLoadError(true)
                             const msg = typeof err?.message === 'string' ? err.message : ''
                             const isNotSupported = err?.name === 'NotSupportedError' || msg.includes('no supported source')
                             if (isNotSupported) {
@@ -489,8 +494,16 @@ export default function GamePage() {
                                             lastAudioSrcRef.current = newUrl
                                             audioRef.current.load()
                                             return audioRef.current.play()
-                                                .then(() => setIsPlaying(true))
-                                                .catch(e => console.error('[Audio] Playback failed after resolve:', e))
+                                                .then(() => {
+                                                    setIsPlaying(true)
+                                                    setAudioStatus('playing')
+                                                    setAudioLoadError(false)
+                                                })
+                                                .catch(e => {
+                                                    console.error('[Audio] Playback failed after resolve:', e)
+                                                    setAudioStatus('error')
+                                                    setAudioLoadError(true)
+                                                })
                                         })
                                         .catch(e => console.error('[Audio] Resolve after NotSupported failed:', e))
                                 }
@@ -501,6 +514,10 @@ export default function GamePage() {
         }
 
         if (shouldPlayAudio) {
+            if (audioStatus === 'idle' || audioStatus === 'error') {
+                setAudioStatus('loading')
+                setAudioLoadError(false)
+            }
             // Lyrics mode: only reveal audio, and avoid expired Spotify previews
             if (isLyricsOnly && gameState.phase === 'reveal') {
                 const matchExp = previewToUse.match(/exp=(\d+)/)
@@ -582,6 +599,15 @@ export default function GamePage() {
         }
     }, [gameState?.phase, currentSong, roomSettings?.mode])
 
+
+
+    // Reset status on new song
+    useEffect(() => {
+        setAudioStatus('idle')
+        setAudioLoadError(false)
+        setIsBulletRound(false)
+    }, [currentSong?.id])
+
     useEffect(() => {
         if (gameState?.phase !== 'reveal') return
         if (lastRevealSoundRoundRef.current === gameState.current_round_index) return
@@ -640,6 +666,45 @@ export default function GamePage() {
             setTimeLeft(0)
         }
     }, [gameState?.phase, gameState?.round_start_time, gameState?.force_reveal_at, roomSettings?.time, isHost, serverTimeOffset])
+
+    const AudioStatusIndicator = () => {
+        if (!gameState || !currentSong) return null
+        const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
+        // Only show during playing (hidden in reveal usually, unless we want to show it there too)
+        // Actually, user complained about silence.
+
+        // If playing/reveal phase and we expect audio:
+        const expectingAudio = gameState.phase === 'reveal' || (!isLyricsOnly && gameState.phase === 'playing')
+
+        if (!expectingAudio) return null
+
+        if (audioStatus === 'loading') {
+            return (
+                <div className="glass-panel" style={{
+                    position: 'fixed', top: '80px', right: '20px',
+                    padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', zIndex: 100
+                }}>
+                    <div className="spinner" style={{ width: '16px', height: '16px', border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                    <span style={{ fontSize: '0.8rem' }}>Loading Audio...</span>
+                    <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+                </div>
+            )
+        }
+
+        if (audioStatus === 'error' || audioLoadError) {
+            return (
+                <div className="glass-panel" style={{
+                    position: 'fixed', top: '80px', right: '20px',
+                    padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', zIndex: 100,
+                    borderColor: '#ff4444', color: '#ff4444'
+                }}>
+                    <span style={{ fontSize: '0.8rem' }}>Audio Unavailable</span>
+                </div>
+            )
+        }
+
+        return null
+    }
 
     // --------------------------------------------------------------------------------
     // 3. ACTIONS (Player)
@@ -975,6 +1040,7 @@ export default function GamePage() {
                 <div className="hud-row">
                     <div className="round-pill">
                         {gameState.is_sudden_death && <span className="round-tag">Sudden Death</span>}
+                        {isBulletRound && <span className="round-tag" style={{ background: '#ff4444', color: 'white', borderColor: '#ff4444' }}>Bullet Round</span>}
                         <span>Round {displayRound} / {roomSettings?.rounds}</span>
                     </div>
                     {/* Inject Loading Indicator during Reveal only */}
@@ -996,28 +1062,30 @@ export default function GamePage() {
                 <div className="hud-progress">
                     <ProgressBar current={timeSynced ? Math.max(0, timeLeft) : 0} total={roomSettings?.time || 15} />
                 </div>
-            </div>
+            </div >
 
             {/* ERROR OVERLAY FOR HOST */}
-            {revealError && isHost && (
-                <div style={{
-                    position: 'absolute', top: '80px', left: '50%', transform: 'translateX(-50%)',
-                    background: 'rgba(233, 20, 41, 0.9)', color: 'white', padding: '12px 24px',
-                    borderRadius: '12px', zIndex: 100, display: 'flex', alignItems: 'center', gap: '16px',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
-                }}>
-                    <div style={{ fontWeight: 700 }}>
-                        Reveal Failed: {revealError}
+            {
+                revealError && isHost && (
+                    <div style={{
+                        position: 'absolute', top: '80px', left: '50%', transform: 'translateX(-50%)',
+                        background: 'rgba(233, 20, 41, 0.9)', color: 'white', padding: '12px 24px',
+                        borderRadius: '12px', zIndex: 100, display: 'flex', alignItems: 'center', gap: '16px',
+                        boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+                    }}>
+                        <div style={{ fontWeight: 700 }}>
+                            Reveal Failed: {revealError}
+                        </div>
+                        <button
+                            className="btn-primary"
+                            style={{ padding: '6px 12px', fontSize: '0.8rem', height: 'auto' }}
+                            onClick={() => processReveal()}
+                        >
+                            Retry
+                        </button>
                     </div>
-                    <button
-                        className="btn-primary"
-                        style={{ padding: '6px 12px', fontSize: '0.8rem', height: 'auto' }}
-                        onClick={() => processReveal()}
-                    >
-                        Retry
-                    </button>
-                </div>
-            )}
+                )
+            }
 
             {/* Main Game Area */}
             <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: '10vh', paddingBottom: '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: 'hidden' }}>
@@ -1238,8 +1306,28 @@ export default function GamePage() {
             <audio
                 ref={onAudioRefChange}
                 preload="auto"
+                loop={true}
                 style={{ display: 'none' }}
-                onError={handleAudioError}
+                onError={(e) => {
+                    console.error('[Audio Event] onError:', e.nativeEvent)
+                    handleAudioError(e)
+                }}
+                onPlay={() => console.log('[Audio Event] onPlay')}
+                onPause={() => console.log('[Audio Event] onPause')}
+                onEnded={() => console.log('[Audio Event] onEnded')}
+                onCanPlay={() => console.log('[Audio Event] onCanPlay')}
+                onWaiting={() => console.log('[Audio Event] onWaiting')}
+                onLoadedMetadata={(e) => {
+                    const duration = e.currentTarget.duration
+                    const roundTime = roomSettings?.time || 15
+                    // Bullet Round: If the song preview is SHORTER than the time you have to guess
+                    if (duration > 0 && duration < roundTime) {
+                        console.log(`[Audio] Bullet Round Detected (Audio: ${duration.toFixed(1)}s < Round: ${roundTime}s)`)
+                        setIsBulletRound(true)
+                    } else {
+                        setIsBulletRound(false)
+                    }
+                }}
             />
 
             <EmoteBar roomCode={code} />
