@@ -129,6 +129,7 @@ export default function GamePage() {
     const audioErrorRef = useRef<Record<string, number>>({})
     const audioPrefetchRef = useRef<Record<string, number>>({})
     const audioPrefetchInFlightRef = useRef<Record<string, boolean>>({})
+    const audioPrefetchPromisesRef = useRef<Record<string, Promise<string | null> | null>>({})
 
     const resolvePreviewForSong = async (song: SongItem): Promise<string | null> => {
         if (!song) return null
@@ -187,6 +188,46 @@ export default function GamePage() {
         const nowSeconds = Math.floor(Date.now() / 1000)
         const isExpiredSoon = hasValidPreview && isPreviewExpired(previewToUse, nowSeconds, 60)
         return { previewToUse, hasValidPreview, isExpiredSoon }
+    }
+
+    const prefetchSongPreview = (song: SongItem): Promise<string | null> => {
+        const { previewToUse, hasValidPreview, isExpiredSoon } = getPreviewStatus(song)
+        if (hasValidPreview && !isExpiredSoon) return Promise.resolve(previewToUse || null)
+
+        const prefetchKey = song.id || song.spotify_uri || previewToUse
+        if (!prefetchKey) return Promise.resolve(null)
+
+        const existing = audioPrefetchPromisesRef.current[prefetchKey]
+        if (existing) return existing
+
+        const lastPrefetchAt = audioPrefetchRef.current[prefetchKey] || 0
+        if (Date.now() - lastPrefetchAt < 10000) return Promise.resolve(null)
+
+        if (audioPrefetchInFlightRef.current[prefetchKey]) {
+            return audioPrefetchPromisesRef.current[prefetchKey] || Promise.resolve(null)
+        }
+
+        audioPrefetchInFlightRef.current[prefetchKey] = true
+        audioPrefetchRef.current[prefetchKey] = Date.now()
+
+        const p = resolvePreviewForSong(song)
+            .then((newUrl) => {
+                if (newUrl && song.id) {
+                    audioPreviewOverrideRef.current[song.id] = newUrl
+                }
+                return newUrl || null
+            })
+            .catch((e) => {
+                console.error('[Audio] Prefetch failed:', e)
+                return null
+            })
+            .finally(() => {
+                audioPrefetchInFlightRef.current[prefetchKey] = false
+                audioPrefetchPromisesRef.current[prefetchKey] = null
+            })
+
+        audioPrefetchPromisesRef.current[prefetchKey] = p
+        return p
     }
 
     // Sync Clock Skew
@@ -471,31 +512,7 @@ export default function GamePage() {
         const nextSong = gameState.playlist?.[gameState.current_round_index + 1]
         if (!nextSong) return
 
-        const { previewToUse, hasValidPreview, isExpiredSoon } = getPreviewStatus(nextSong)
-        if (hasValidPreview && !isExpiredSoon) return
-
-        const prefetchKey = nextSong.id || nextSong.spotify_uri || previewToUse
-        if (!prefetchKey) return
-
-        const lastPrefetchAt = audioPrefetchRef.current[prefetchKey] || 0
-        if (Date.now() - lastPrefetchAt < 10000) return
-
-        if (audioPrefetchInFlightRef.current[prefetchKey]) return
-        audioPrefetchInFlightRef.current[prefetchKey] = true
-        audioPrefetchRef.current[prefetchKey] = Date.now()
-
-        resolvePreviewForSong(nextSong)
-            .then((newUrl) => {
-                if (newUrl && nextSong.id) {
-                    audioPreviewOverrideRef.current[nextSong.id] = newUrl
-                }
-            })
-            .catch((e) => {
-                console.error('[Audio] Prefetch failed:', e)
-            })
-            .finally(() => {
-                audioPrefetchInFlightRef.current[prefetchKey] = false
-            })
+        prefetchSongPreview(nextSong)
     }, [gameState?.phase, gameState?.current_round_index, gameState?.playlist?.length])
 
     useEffect(() => {
@@ -916,7 +933,8 @@ export default function GamePage() {
             })()
             : false
 
-        const revealMs = 5000 + (shouldPrefetchNext ? 1500 : 0)
+        const revealMs = 5000
+        const prefetchMaxWaitMs = 3000
 
         setTimeout(async () => {
             const currentGameState = gameStateRef.current
@@ -925,6 +943,13 @@ export default function GamePage() {
             if (!currentGameState || !currentPlayers) return
 
             const code = params.code as string
+
+            if (shouldPrefetchNext && nextSong) {
+                await Promise.race([
+                    prefetchSongPreview(nextSong),
+                    new Promise(resolve => setTimeout(resolve, prefetchMaxWaitMs))
+                ])
+            }
 
             await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
         }, revealMs)
