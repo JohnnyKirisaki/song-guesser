@@ -140,6 +140,7 @@ export default function GamePage() {
         const isDeezerId = typeof trackId === 'string' && /^\d+$/.test(trackId)
 
         try {
+            // 1. Try refreshing by ID (Fastest)
             if (isDeezerId) {
                 const res = await fetch(`/api/refresh-track?id=${trackId}`)
                 const data = await res.json()
@@ -149,8 +150,14 @@ export default function GamePage() {
                     return newUrl
                 }
             }
+        } catch (err) {
+            console.error('[Audio] ID Refresh failed, trying fallback:', err)
+        }
 
+        // 2. Fallback: Resolve by Artist + Title (Slower but more robust)
+        try {
             if (song.artist_name && song.track_name) {
+                console.log('[Audio] Attempting fallback resolution for:', song.track_name)
                 const res = await fetch('/api/resolve-tracks', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -163,11 +170,12 @@ export default function GamePage() {
                 if (resolved?.deezer?.preview_url) {
                     const newUrl = resolved.deezer.preview_url.replace(/^http:\/\//i, 'https://')
                     audioPreviewOverrideRef.current[song.id] = newUrl
+                    console.log('[Audio] Fallback resolution success')
                     return newUrl
                 }
             }
         } catch (err) {
-            console.error('[Audio] Preview resolve failed:', err)
+            console.error('[Audio] Preview resolve completely failed:', err)
         }
 
         return null
@@ -641,10 +649,23 @@ export default function GamePage() {
                             if (newUrl) {
                                 playUrl(newUrl)
                             } else {
-                                console.error('[Audio] Refresh failed: No URL returned')
+                                console.error('[Audio] Refresh failed: No URL returned. Stopping playback.')
+                                // STOP playback to prevent old song from looping
+                                if (audioRef.current) {
+                                    audioRef.current.pause()
+                                    audioRef.current.src = '' // Clear source
+                                }
+                                setIsPlaying(false)
+                                setAudioStatus('error')
                             }
                         })
-                        .catch(e => console.error('[Audio] Refresh Error:', e))
+                        .catch(e => {
+                            console.error('[Audio] Refresh Error:', e)
+                            if (audioRef.current) {
+                                audioRef.current.pause()
+                            }
+                            setIsPlaying(false)
+                        })
                     return
                 } else {
                     console.warn('[Audio] Token expired and already retried. Skipping playback.')
@@ -1131,7 +1152,22 @@ export default function GamePage() {
         )
     }
 
-    const isReveal = gameState.phase === 'reveal'
+    const isRealReveal = gameState.phase === 'reveal'
+
+    // Audio Persistence:
+    // If we are "playing" but audio is still loading, look like we are in reveal of PREVIOUS round
+    const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
+    const isWaitingForAudio = !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle')
+
+    // Effective State for Render
+    const isReveal = isRealReveal || isWaitingForAudio
+
+    // If waiting for audio, show PREVIOUS song, not current.
+    // If round index is 0, we can't show previous, so just show current (loading)
+    const effectiveSong = isWaitingForAudio && gameState.current_round_index > 0
+        ? gameState.playlist[gameState.current_round_index - 1]
+        : currentSong
+
     const displayRound = gameState.is_sudden_death ? (roomSettings?.rounds || (gameState.current_round_index + 1)) : (gameState.current_round_index + 1)
     const displayPlayers = (isSuddenDeath && duelingIds.length > 0)
         ? players.filter(p => duelingIds.includes(p.id))
@@ -1149,7 +1185,7 @@ export default function GamePage() {
                         <span>Round {displayRound} / {roomSettings?.rounds}</span>
                     </div>
                     {/* Inject Loading Indicator during Reveal only */}
-                    {showRevealLyricsFetch && isLyricsOnly && isReveal && (
+                    {(showRevealLyricsFetch && isLyricsOnly && isRealReveal) && (
                         <div className="reveal-loading-pill" style={{
                             background: 'rgba(255, 215, 0, 0.2)', color: '#FFD700',
                             border: '1px solid rgba(255, 215, 0, 0.4)', padding: '4px 12px',
@@ -1160,7 +1196,21 @@ export default function GamePage() {
                             FETCHING NEW LYRICS...
                         </div>
                     )}
-                    <div className={`timer-pill ${gameState.phase === 'playing' && timeLeft <= 3 ? 'countdown-pulse' : ''}`}>
+
+                    {/* Audio Loading Indicator */}
+                    {isWaitingForAudio && (
+                        <div className="reveal-loading-pill" style={{
+                            background: 'rgba(30, 215, 96, 0.2)', color: '#1ed760',
+                            border: '1px solid rgba(30, 215, 96, 0.4)', padding: '4px 12px',
+                            borderRadius: '99px', fontSize: '0.8rem', fontWeight: 700,
+                            display: 'flex', alignItems: 'center', gap: '8px'
+                        }}>
+                            <div className="animate-spin" style={{ width: '12px', height: '12px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                            LOADING NEXT SONG...
+                        </div>
+                    )}
+
+                    <div className={`timer-pill ${gameState.phase === 'playing' && !isWaitingForAudio && timeLeft <= 3 ? 'countdown-pulse' : ''}`}>
                         {timeSynced ? Math.ceil(Math.max(0, timeLeft)) : '...'}
                     </div>
                 </div>
@@ -1206,7 +1256,7 @@ export default function GamePage() {
                                 {isReveal ? (
                                     <img
                                         className="vinyl-cover"
-                                        src={currentSong.cover_url}
+                                        src={effectiveSong.cover_url}
                                         style={{
                                             width: '100%', height: '100%', objectFit: 'cover',
                                             borderRadius: '50%'
@@ -1223,29 +1273,54 @@ export default function GamePage() {
                     {/* Question / Inputs */}
                     {isReveal ? (
                         <div style={{ textAlign: 'center', animation: 'fadeIn 0.5s', width: '100%' }}>
-                            {currentSong.picked_by_user_id === profile.id && (
+                            {effectiveSong.picked_by_user_id === profile.id && (
                                 <div style={{ marginBottom: '12px', fontWeight: 700, color: '#FFD700' }}>
                                     This was your song
                                 </div>
                             )}
                             <h2 className="text-gradient" style={{ fontSize: '2rem', fontWeight: 900, marginBottom: '8px' }}>
-                                {currentSong.track_name}
+                                {effectiveSong.track_name}
                             </h2>
                             <h3 style={{ fontSize: '1.5rem', color: '#ccc' }}>
-                                {currentSong.artist_name}
+                                {effectiveSong.artist_name}
                             </h3>
-                            {songPicker && !isMySong && (
-                                <div className="song-credit">
-                                    <img src={songPicker.avatar_url} alt={songPicker.username} />
-                                    <span>{songPicker.username} added this song</span>
-                                </div>
-                            )}
+                            {/* We use 'songPicker' derived from currentSong mostly. Need to check if effectiveSong differs. */}
+                            {(() => {
+                                const picker = players.find(p => p.id === effectiveSong.picked_by_user_id)
+                                const isMine = picker?.id === profile.id
+                                if (picker && !isMine) {
+                                    return (
+                                        <div className="song-credit">
+                                            <img src={picker.avatar_url} alt={picker.username} />
+                                            <span>{picker.username} added this song</span>
+                                        </div>
+                                    )
+                                }
+                                return null
+                            })()}
+
 
                             <div style={{ marginTop: '18px', width: '100%', maxWidth: '520px', marginLeft: 'auto', marginRight: 'auto' }}>
                                 <div style={{ fontWeight: 700, marginBottom: '10px', opacity: 0.9 }}>Round Results</div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     {displayPlayers.map(p => {
+                                        // If viewing previous round (waiting for audio), we rely on 'last_' stats which ARE from previous round.
+                                        // But if we advanced round index, 'last_' stats might have been reset?
+                                        // In 'useEffect [gameState.current_round_index]', we reset stats:
+                                        // setPlayers(prev => prev.map(p => ({ ...p, last_round_correct... = undefined })))
+                                        // This means we CANNOT meaningfully show "Correct/Wrong" for the previous round once the round index has updated.
+                                        // The stats are gone from local state.
+
+                                        // However, showing the Reveal UI without stats is still better than showing the empty Game Input with no audio.
+                                        // We can hide the specific "Correct/Wrong" pills if data is missing.
+
                                         const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
+                                        const hasData = p.last_round_correct_title !== undefined
+
+                                        // If we are waiting for audio, it's safer to just show the leaderboard or minimal info?
+                                        // Actually, if we just transitioned, 'last_' stats in local state MIGHT be cleared.
+                                        // Let's check the useEffect again.
+
                                         return (
 
                                             <div key={p.id} style={{
@@ -1262,11 +1337,14 @@ export default function GamePage() {
                                                 <div style={{ flex: 1 }}>
                                                     <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</div>
                                                     <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>
-                                                        {correct ? '✅ Correct' : '❌ Wrong'}
+                                                        {hasData
+                                                            ? (correct ? '✅ Correct' : '❌ Wrong')
+                                                            : (isWaitingForAudio ? 'Loading...' : 'Ready')
+                                                        }
                                                     </div>
                                                 </div>
                                                 <div style={{ fontWeight: 800, color: correct ? '#1ed760' : '#e91429' }}>
-                                                    {correct ? `+${p.last_round_points ?? 0}` : '0'}
+                                                    {hasData ? (correct ? `+${p.last_round_points ?? 0}` : '0') : '-'}
                                                 </div>
                                             </div>
                                         )
@@ -1275,7 +1353,7 @@ export default function GamePage() {
                             </div>
 
                             <div style={{ marginTop: '16px', fontWeight: 'bold' }}>
-                                Next round starting...
+                                {isWaitingForAudio ? 'Syncing Audio...' : 'Next round starting...'}
                             </div>
                         </div>
                     ) : (
