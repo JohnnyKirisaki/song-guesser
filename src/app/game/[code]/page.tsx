@@ -1154,9 +1154,8 @@ export default function GamePage() {
 
     const isRealReveal = gameState.phase === 'reveal'
 
-    // Audio Persistence:
     // If we are "playing" but audio is still loading, look like we are in reveal of PREVIOUS round
-    const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
+    // const isLyricsOnly = roomSettings?.mode === 'lyrics_only' // REDEFINED! Use existing from line 275
     const isWaitingForAudio = !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle')
 
     // Effective State for Render
