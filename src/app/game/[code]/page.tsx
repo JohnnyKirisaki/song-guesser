@@ -400,8 +400,8 @@ export default function GamePage() {
             // while waiting for next API result.
             setPlayers(prev => prev.map(p => ({
                 ...p,
-                last_round_correct_artist: false,
-                last_round_correct_title: false,
+                last_round_correct_artist: undefined,
+                last_round_correct_title: undefined,
                 is_correct: false,
                 last_round_points: 0
             })))
@@ -700,6 +700,9 @@ export default function GamePage() {
 
         const me = players.find(p => p.id === profile.id)
         if (!me) return
+
+        // Wait for results to propagate from Firebase
+        if (me.last_round_correct_title === undefined && me.last_round_correct_artist === undefined) return
 
         const correct = me.last_round_correct_title === true || me.last_round_correct_artist === true
         soundManager.play(correct ? 'correct' : 'wrong')
