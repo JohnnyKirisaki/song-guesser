@@ -63,6 +63,7 @@ export default function GamePage() {
     const [audioLoadError, setAudioLoadError] = useState<boolean>(false)
     const [retryTrigger, setRetryTrigger] = useState(0) // Retry counter for failed audio
     const [isBulletRound, setIsBulletRound] = useState(false)
+    const [playingSongId, setPlayingSongId] = useState<string | null>(null) // Track which song is ACTUALLY playing
 
     const { volume } = useVolume()
     const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
@@ -575,6 +576,7 @@ export default function GamePage() {
                         .then(() => {
                             setIsPlaying(true)
                             setAudioStatus('playing') // FIX: Ensure we move out of 'loading' state
+                            setPlayingSongId(currentSong.id)
                             setAudioLoadError(false)
                         })
                         .catch((err) => {
@@ -599,6 +601,7 @@ export default function GamePage() {
                                                 .then(() => {
                                                     setIsPlaying(true)
                                                     setAudioStatus('playing')
+                                                    setPlayingSongId(currentSong.id)
                                                     setAudioLoadError(false)
                                                 })
                                                 .catch(e => {
@@ -1212,9 +1215,9 @@ export default function GamePage() {
     const isRealReveal = gameState.phase === 'reveal'
 
     // If we are "playing" but audio is still loading, look like we are in reveal of PREVIOUS round
-    // const isLyricsOnly = roomSettings?.mode === 'lyrics_only' // REDEFINED! Use existing from line 275
-    const isWaitingForAudio = !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle')
-
+    // const isLyricsOnly = roomSettings?.mode === 'lyrics_only'    // Treat 'error' as waiting, AND if we are 'playing' but the song ID doesn't match current (stale audio), we are waiting.
+    const isAudioStale = audioStatus === 'playing' && playingSongId !== currentSong?.id
+    const isWaitingForAudio = !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale)
     // Effective State for Render
     const isReveal = isRealReveal || isWaitingForAudio
 

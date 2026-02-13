@@ -66,7 +66,9 @@ export async function POST(request: Request) {
                 artist_name: '???',
                 track_name: '???',
                 cover_url: '',
-                spotify_uri: '' // Masked
+                track_name: '???',
+                cover_url: '',
+                spotify_uri: song.spotify_uri || '' // Unmasked to allow ID-based audio refresh
             })
         })
 
