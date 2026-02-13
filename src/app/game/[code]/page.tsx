@@ -545,6 +545,21 @@ export default function GamePage() {
         const canRetry = !lastRetryAt || (Date.now() - lastRetryAt) > 10000
         const nowSeconds = Math.floor(Date.now() / 1000)
 
+        // Auto-Fetch: If currently no preview URL, try to resolve it immediately
+        if (!hasValidPreview && currentSong?.id && !audioPrefetchInFlightRef.current[currentSong.id]) {
+            const lastAttempt = audioErrorRef.current[currentSong.id] || 0
+            if (Date.now() - lastAttempt > 5000) {
+                console.log('[Audio] Missing preview URL, attempting immediate resolution...')
+                audioErrorRef.current[currentSong.id] = Date.now() // Prevent spam
+                resolvePreviewForSong(currentSong).then(url => {
+                    if (url) {
+                        console.log('[Audio] Resolved missing preview:', url)
+                        setRetryTrigger(n => n + 1) // Trigger re-render/play
+                    }
+                })
+            }
+        }
+
         const playUrl = (url: string) => {
             if (!audioRef.current) return
             if (url !== lastAudioSrcRef.current) {

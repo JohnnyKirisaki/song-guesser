@@ -60,8 +60,8 @@ export async function POST(request: Request) {
 
             maskedPlaylist.push({
                 id: song.id,
-                picked_by_user_id: song.picked_by_user_id,
-                preview_url: song.preview_url,
+                picked_by_user_id: song.picked_by_user_id || null,
+                preview_url: song.preview_url || null,
                 // Mask the rest
                 artist_name: '???',
                 track_name: '???',
