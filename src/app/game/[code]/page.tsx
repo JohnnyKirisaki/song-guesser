@@ -551,6 +551,8 @@ export default function GamePage() {
                     playPromise
                         .then(() => {
                             setIsPlaying(true)
+                            setAudioStatus('playing') // FIX: Ensure we move out of 'loading' state
+                            setAudioLoadError(false)
                         })
                         .catch((err) => {
                             console.error('[Audio] Playback failed:', err)
@@ -1252,7 +1254,7 @@ export default function GamePage() {
                         >
                             <div className="vinyl-grooves" />
                             <div className={`vinyl-label ${isReveal ? 'reveal' : ''}`}>
-                                {isReveal ? (
+                                {isReveal && effectiveSong?.cover_url ? (
                                     <img
                                         className="vinyl-cover"
                                         src={effectiveSong.cover_url}
@@ -1494,7 +1496,12 @@ export default function GamePage() {
                     console.error('[Audio Event] onError:', e.nativeEvent)
                     handleAudioError(e)
                 }}
-                onPlay={() => console.log('[Audio Event] onPlay')}
+                onPlay={() => {
+                    console.log('[Audio Event] onPlay')
+                    // Backup: Ensure status is playing
+                    setAudioStatus('playing')
+                    setAudioLoadError(false)
+                }}
                 onPause={() => console.log('[Audio Event] onPause')}
                 onEnded={() => console.log('[Audio Event] onEnded')}
                 onCanPlay={() => console.log('[Audio Event] onCanPlay')}
