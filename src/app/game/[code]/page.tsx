@@ -60,6 +60,7 @@ export default function GamePage() {
     const [revealError, setRevealError] = useState<string | null>(null) // Capture API/Network errors
     const [audioStatus, setAudioStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle')
     const [audioLoadError, setAudioLoadError] = useState<boolean>(false)
+    const [retryTrigger, setRetryTrigger] = useState(0) // Retry counter for failed audio
     const [isBulletRound, setIsBulletRound] = useState(false)
 
     const { volume } = useVolume()
@@ -706,7 +707,7 @@ export default function GamePage() {
                 }
             }
         }
-    }, [gameState?.phase, currentSong, roomSettings?.mode])
+    }, [gameState?.phase, currentSong, roomSettings?.mode, retryTrigger])
 
 
 
@@ -716,6 +717,30 @@ export default function GamePage() {
         setAudioLoadError(false)
         setIsBulletRound(false)
     }, [currentSong?.id])
+
+    // Auto-Retry Loop for Audio Error
+    useEffect(() => {
+        if (gameState?.phase === 'playing' && (audioStatus === 'error' || audioLoadError)) {
+            const t = setTimeout(() => {
+                console.log('[Audio] Auto-retrying playback...')
+                setAudioStatus('idle') // Reset to idle to trigger main effect
+                setAudioLoadError(false)
+                setRetryTrigger(n => n + 1)
+
+                // Clear the "already retried" flag for this song so it actually tries again
+                if (currentSong?.id) {
+                    delete audioRetryRef.current[currentSong.id]
+                    if (currentSong.preview_url) {
+                        delete audioRetryRef.current[currentSong.preview_url]
+                        // Also clear normalized version just in case
+                        const norm = currentSong.preview_url.replace(/^http:\/\//i, 'https://')
+                        delete audioRetryRef.current[norm]
+                    }
+                }
+            }, 2000) // Retry every 2 seconds
+            return () => clearTimeout(t)
+        }
+    }, [gameState?.phase, audioStatus, audioLoadError, currentSong?.id])
 
     useEffect(() => {
         if (gameState?.phase !== 'reveal') return
@@ -1254,7 +1279,7 @@ export default function GamePage() {
                         >
                             <div className="vinyl-grooves" />
                             <div className={`vinyl-label ${isReveal ? 'reveal' : ''}`}>
-                                {isReveal && effectiveSong?.cover_url ? (
+                                {isReveal ? (
                                     <img
                                         className="vinyl-cover"
                                         src={effectiveSong.cover_url}
