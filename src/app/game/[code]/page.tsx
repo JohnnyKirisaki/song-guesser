@@ -30,6 +30,7 @@ type Player = {
     last_round_correct_title?: boolean
     last_round_correct_artist?: boolean
     last_round_time_taken?: number
+    last_round_index?: number
     is_host: boolean
     sudden_death_score?: number
 }
@@ -771,7 +772,11 @@ export default function GamePage() {
         if (!me) return
 
         // Wait for results to propagate from Firebase
-        if (me.last_round_correct_title === undefined && me.last_round_correct_artist === undefined) return
+        // FIX: Ensure the player stats update corresponds to the CURRENT round
+        if (me.last_round_index !== gameState.current_round_index) {
+            console.log('[SFX] Waiting for fresh stats...', { local: me.last_round_index, server: gameState.current_round_index })
+            return
+        }
 
         const isTitleCorrect = !!me.last_round_correct_title
         const isArtistCorrect = !!me.last_round_correct_artist

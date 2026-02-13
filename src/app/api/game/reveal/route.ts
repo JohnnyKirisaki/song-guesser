@@ -196,6 +196,7 @@ export async function POST(request: Request) {
             updates[`rooms/${roomCode}/players/${p.id}/last_round_correct_artist`] = correctArtist
             updates[`rooms/${roomCode}/players/${p.id}/last_round_correct_title`] = correctTitle
             updates[`rooms/${roomCode}/players/${p.id}/last_round_time_taken`] = clampedTimeTaken
+            updates[`rooms/${roomCode}/players/${p.id}/last_round_index`] = roundIndex
 
             roundGuesses.push({
                 user_id: p.id,
