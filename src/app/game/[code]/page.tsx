@@ -157,6 +157,12 @@ export default function GamePage() {
 
         // 2. Fallback: Resolve by Artist + Title (Slower but more robust)
         try {
+            // Guard: If it's a masked song (during sudden death or before reveal), do NOT fallback search "???"
+            if (song.artist_name === '???' || song.track_name === '???') {
+                console.warn('[Audio] Skipping fallback for masked song')
+                return null
+            }
+
             if (song.artist_name && song.track_name) {
                 console.log('[Audio] Attempting fallback resolution for:', song.track_name)
                 const res = await fetch('/api/resolve-tracks', {
@@ -752,7 +758,11 @@ export default function GamePage() {
         // Wait for results to propagate from Firebase
         if (me.last_round_correct_title === undefined && me.last_round_correct_artist === undefined) return
 
-        const correct = me.last_round_correct_title === true || me.last_round_correct_artist === true
+        const isTitleCorrect = !!me.last_round_correct_title
+        const isArtistCorrect = !!me.last_round_correct_artist
+        const correct = isTitleCorrect || isArtistCorrect
+
+        console.log(`[SFX] Playing sound. Title: ${isTitleCorrect}, Artist: ${isArtistCorrect} -> ${correct ? 'correct' : 'wrong'}`)
         soundManager.play(correct ? 'correct' : 'wrong')
         lastRevealSoundRoundRef.current = gameState.current_round_index
     }, [gameState?.phase, gameState?.current_round_index, players, profile.id])

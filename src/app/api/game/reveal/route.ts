@@ -39,6 +39,8 @@ export async function POST(request: Request) {
 
         const totalTime = settings?.time || 15
         const mode = settings?.mode || 'normal'
+        console.log(`[Reveal] Start. Room: ${roomCode}, Round: ${roundIndex}, Mode: ${mode}`)
+        const revealStart = Date.now()
         const isSuddenDeath = !!gameState.is_sudden_death
         const usedSongIds = new Set((gameState.playlist || []).map((s: any) => s.id).filter(Boolean))
 
@@ -115,7 +117,13 @@ export async function POST(request: Request) {
 
         const findReplacementWithLyrics = async (): Promise<{ song: SongItem, lyrics: string } | null> => {
             const pool = allSongs.filter(s => !usedSongIds.has(s.id)).sort(() => 0.5 - Math.random())
+            let attempts = 0
             for (const candidate of pool) {
+                if (attempts >= 3) {
+                    console.log('[Reveal] Max replacement attempts reached (3). Giving up.')
+                    break
+                }
+                attempts++
                 const l = await fetchLyrics(candidate.artist_name, candidate.track_name)
                 if (!l) continue
                 usedSongIds.add(candidate.id)
@@ -276,52 +284,69 @@ export async function POST(request: Request) {
                         }
                     }
                 } else {
-                    // Normal mode: cache lyrics for NEXT round + sanity check current
+                    // Normal lyrics mode: cache lyrics for NEXT round + sanity check current
                     const nextRoundIndex = roundIndex + 1
                     const nextSecretRef = ref(db, `room_secrets/${roomCode}/${nextRoundIndex}`)
                     const nextSecretSnap = await get(nextSecretRef)
 
-                    if (nextSecretSnap.exists()) {
-                        const nextSong = nextSecretSnap.val() as SongItem
-                        const cacheRef = ref(db, `rooms/${roomCode}/lyrics_cache/${nextSong.id}`)
-                        const cacheSnap = await get(cacheRef)
+                    // Parallelize these operations
+                    const promises: Promise<any>[] = []
 
-                        if (!cacheSnap.exists()) {
-                            const l = await fetchLyrics(nextSong.artist_name, nextSong.track_name)
-                            if (l) {
-                                updates[`rooms/${roomCode}/lyrics_cache/${nextSong.id}`] = l
-                                await ensurePreviewForSong(nextSong, nextRoundIndex, true)
-                            } else {
-                                const replacement = await findReplacementWithLyrics()
-                                if (replacement) {
-                                    const updated = await ensurePreviewForSong(replacement.song, nextRoundIndex, true)
-                                    applySongAtIndex(nextRoundIndex, updated)
-                                    updates[`rooms/${roomCode}/lyrics_cache/${replacement.song.id}`] = replacement.lyrics
+                    // 1. Next Round Logic
+                    if (nextSecretSnap.exists()) {
+                        promises.push((async () => {
+                            const nextSong = nextSecretSnap.val() as SongItem
+                            const cacheRef = ref(db, `rooms/${roomCode}/lyrics_cache/${nextSong.id}`)
+                            const cacheSnap = await get(cacheRef)
+
+                            if (!cacheSnap.exists()) {
+                                const l = await fetchLyrics(nextSong.artist_name, nextSong.track_name)
+                                if (l) {
+                                    updates[`rooms/${roomCode}/lyrics_cache/${nextSong.id}`] = l
+                                    await ensurePreviewForSong(nextSong, nextRoundIndex, true)
+                                } else {
+                                    const replacement = await findReplacementWithLyrics()
+                                    if (replacement) {
+                                        const updated = await ensurePreviewForSong(replacement.song, nextRoundIndex, true)
+                                        applySongAtIndex(nextRoundIndex, updated)
+                                        updates[`rooms/${roomCode}/lyrics_cache/${replacement.song.id}`] = replacement.lyrics
+                                    } else {
+                                        // Fallback: If no replacement found, ensure original song has audio
+                                        console.log(`[Reveal] No replacement found. Using original: ${nextSong.track_name}`)
+                                        await ensurePreviewForSong(nextSong, nextRoundIndex, true)
+                                    }
                                 }
+                            } else {
+                                await ensurePreviewForSong(nextSong, nextRoundIndex, true)
+                            }
+                        })())
+                    }
+
+                    // 2. Current Round Sanity Check
+                    promises.push((async () => {
+                        const currentCacheRef = ref(db, `rooms/${roomCode}/lyrics_cache/${fullSong.id}`)
+                        const currentCacheSnap = await get(currentCacheRef)
+                        if (!currentCacheSnap.exists()) {
+                            const l = await fetchLyrics(fullSong.artist_name, fullSong.track_name)
+                            if (l) {
+                                updates[`rooms/${roomCode}/lyrics_cache/${fullSong.id}`] = l
+                                await ensurePreviewForSong(fullSong, roundIndex, true)
                             }
                         } else {
-                            await ensurePreviewForSong(nextSong, nextRoundIndex, true)
-                        }
-                    }
-
-                    const currentCacheRef = ref(db, `rooms/${roomCode}/lyrics_cache/${fullSong.id}`)
-                    const currentCacheSnap = await get(currentCacheRef)
-                    if (!currentCacheSnap.exists()) {
-                        const l = await fetchLyrics(fullSong.artist_name, fullSong.track_name)
-                        if (l) {
-                            updates[`rooms/${roomCode}/lyrics_cache/${fullSong.id}`] = l
                             await ensurePreviewForSong(fullSong, roundIndex, true)
                         }
-                    } else {
-                        await ensurePreviewForSong(fullSong, roundIndex, true)
-                    }
+                    })())
+
+                    await Promise.all(promises)
                 }
             } catch (e) {
                 console.error('Lyrics JIT fetch error', e)
             }
         }
 
+        console.log(`[Reveal] Updates ready. Taking: ${Date.now() - revealStart}ms`)
         await update(ref(db), updates)
+        console.log(`[Reveal] Done. Total: ${Date.now() - revealStart}ms`)
         return NextResponse.json({ success: true })
 
     } catch (error: any) {
