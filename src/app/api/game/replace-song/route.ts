@@ -44,8 +44,11 @@ export async function POST(request: Request) {
             // Better to verify it resolves.
             let preview = candidate.preview_url
             if (!preview) {
-                const resolved = await resolveSingleTrack(candidate.artist_name, candidate.track_name)
-                preview = resolved?.preview || null
+                const resolved = await resolveSingleTrack({
+                    artist: candidate.artist_name,
+                    title: candidate.track_name
+                })
+                preview = resolved.deezer?.preview_url || null
             }
 
             if (!preview) continue // helper needs audio!

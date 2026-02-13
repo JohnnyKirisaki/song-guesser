@@ -79,7 +79,7 @@ async function fetchWithRetry(url: string, retries = 7): Promise<any> {
 }
 
 // Single Track Resolver
-async function resolveSingleTrack(track: { artist: string, title: string, durationMs?: number, isrc?: string, album?: string, year?: string }): Promise<ResolvedTrack> {
+export async function resolveSingleTrack(track: { artist: string, title: string, durationMs?: number, isrc?: string, album?: string, year?: string }): Promise<ResolvedTrack> {
     const cacheKey = `deezer:${normalizeForCompare(track.artist)}|${normalizeForCompare(track.title)}|${track.isrc || ''}`
     if (CACHE.has(cacheKey)) return CACHE.get(cacheKey)
 
