@@ -2,11 +2,14 @@ import { normalizeForSearch, scoreTrackMatch, normalizeForCompare } from './scor
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { db } from './firebase'
+import { ref, get, set } from 'firebase/database'
 
 const DEEZER_API = 'https://api.deezer.com/search'
-const CACHE = new Map<string, any>()
 const DEEZER_QUOTA_COOLDOWN_MS = 60_000
-let deezerQuotaBlockedUntil = 0
+
+// We track quota in Firebase so ALL Vercel instances know when we are blocked
+const QUOTA_REF_PATH = 'server_state/deezer_cooldown_until'
 
 type ResolvedTrack = {
     input: {
@@ -60,8 +63,13 @@ function isQuotaExceededError(err: unknown): boolean {
 }
 
 async function fetchWithRetry(url: string, retries = 4): Promise<any> {
-    if (deezerQuotaBlockedUntil > Date.now()) {
-        throw new Error('Deezer API quota cooldown active')
+    // 1. Check Global Quota State
+    const quotaRef = ref(db, QUOTA_REF_PATH)
+    const quotaSnap = await get(quotaRef)
+    const blockedUntil = quotaSnap.val() || 0
+
+    if (blockedUntil > Date.now()) {
+        throw new Error('Deezer API quota cooldown active (Global Sync)')
     }
 
     for (let i = 0; i < retries; i++) {
@@ -76,7 +84,8 @@ async function fetchWithRetry(url: string, retries = 4): Promise<any> {
             // Handle Deezer specific errors (Quota Limit)
             // Error: { type: 'Exception', message: 'Quota limit exceeded', code: 4 }
             if (data.error && data.error.code === 4) {
-                deezerQuotaBlockedUntil = Date.now() + DEEZER_QUOTA_COOLDOWN_MS
+                // Set global cooldown!
+                await set(quotaRef, Date.now() + DEEZER_QUOTA_COOLDOWN_MS)
                 throw new Error('Deezer API Quota Exceeded (Code 4)')
             }
 
@@ -93,8 +102,15 @@ async function fetchWithRetry(url: string, retries = 4): Promise<any> {
 
 // Single Track Resolver
 export async function resolveSingleTrack(track: { artist: string, title: string, durationMs?: number, isrc?: string, album?: string, year?: string }): Promise<ResolvedTrack> {
-    const cacheKey = `deezer:${normalizeForCompare(track.artist)}|${normalizeForCompare(track.title)}|${track.isrc || ''}`
-    if (CACHE.has(cacheKey)) return CACHE.get(cacheKey)
+    // Generate valid Firebase path key (firebase keys cannot contain . # $ [ ] or line breaks)
+    const rawKey = `deezer_${normalizeForCompare(track.artist)}_${normalizeForCompare(track.title)}_${track.isrc || ''}`
+    const cacheKey = rawKey.replace(/[.#$\[\]]/g, '')
+    const dbCachePath = `server_state/deezer_track_cache/${cacheKey}`
+
+    const cachedSnap = await get(ref(db, dbCachePath))
+    if (cachedSnap.exists()) {
+        return cachedSnap.val() as ResolvedTrack
+    }
 
     const normArtist = normalizeForSearch(track.artist)
     const normTitle = normalizeForSearch(track.title)
@@ -172,7 +188,7 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                     candidates: [],
                     debug: { queriesUsed: [`isrc:${track.isrc}`], candidatesFound: 1 }
                 }
-                CACHE.set(cacheKey, result)
+                set(ref(db, dbCachePath), result)
                 return result
             } else if (data.error) {
                 console.warn(`[Resolver] ISRC Lookup Error for ${track.isrc}: ${data.error.message || data.error}`)
@@ -188,7 +204,7 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                     candidates: [],
                     debug: { queriesUsed, candidatesFound: 0 }
                 }
-                CACHE.set(cacheKey, result)
+                set(ref(db, dbCachePath), result)
                 return result
             }
         }
@@ -336,7 +352,7 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
         }
     }
 
-    CACHE.set(cacheKey, result)
+    set(ref(db, dbCachePath), result)
     return result
 }
 
