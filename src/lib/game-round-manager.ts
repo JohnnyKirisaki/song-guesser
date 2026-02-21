@@ -114,8 +114,8 @@ export async function processNextRound(
         await update(ref(db, `rooms/${roomCode}`), {
             'game_state/phase': 'playing',
             'game_state/current_round_index': nextRound,
-            // Use server time so all clients share the same reference.
-            'game_state/round_start_time': serverTimestamp() as any,
+            // Do NOT set round_start_time yet. Allow Host to sync audio before timer starts.
+            'game_state/round_start_time': null,
             'game_state/force_reveal_at': null, // Clear any force reveal
             // Reset submissions
             ...Object.fromEntries(players.map(p => [`players/${p.id}/has_submitted`, false])),

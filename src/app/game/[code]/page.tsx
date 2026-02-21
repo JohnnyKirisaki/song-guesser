@@ -830,7 +830,27 @@ export default function GamePage() {
         }
     }, [gameState?.phase, currentSong, roomSettings?.mode, retryTrigger])
 
+    // Host auto-starts the timer once audio is playing
+    useEffect(() => {
+        if (!isHost || gameState?.phase !== 'playing') return
+        if (gameState?.round_start_time) return // Already started
 
+        // If lyrics only mode, there is no audio to wait for, so start immediately
+        if (roomSettings?.mode === 'lyrics_only') {
+            update(ref(db, `rooms/${code}/game_state`), {
+                round_start_time: serverTimestamp() as any
+            })
+            return
+        }
+
+        // Normal mode: wait for audio to be playing AND no errors
+        if (audioStatus === 'playing' && playingSongId === currentSong?.id) {
+            console.log('[Audio Sync] Host audio is playing, starting round timer...')
+            update(ref(db, `rooms/${code}/game_state`), {
+                round_start_time: serverTimestamp() as any
+            })
+        }
+    }, [isHost, gameState?.phase, gameState?.round_start_time, audioStatus, playingSongId, currentSong?.id, roomSettings?.mode, code])
 
     // Reset status on new song
     useEffect(() => {
@@ -891,13 +911,16 @@ export default function GamePage() {
         if (gameState?.phase === 'playing' && gameState.round_start_time) {
             const totalTime = roomSettings?.time || 15
             const startRaw = gameState.round_start_time
-            const getStartMs = () => typeof startRaw === 'number' ? startRaw : new Date(startRaw).getTime()
+            const getStartMs = () => typeof startRaw === 'number' ? startRaw : (startRaw ? new Date(startRaw).getTime() : NaN)
             const startMs = getStartMs()
-
-            if (Number.isNaN(startMs)) return
 
             // Immediate update function
             const updateTimer = () => {
+                if (Number.isNaN(startMs) || !startRaw) {
+                    setTimeLeft(totalTime)
+                    return totalTime
+                }
+
                 const now = Date.now() + serverTimeOffset
                 const elapsed = (now - startMs) / 1000
                 // Use float for smooth progress bar
@@ -1320,7 +1343,7 @@ export default function GamePage() {
 
     // Treat 'error' as waiting, AND if we are 'playing' but the song ID doesn't match current (stale audio), we are waiting.
     const isAudioStale = audioStatus === 'playing' && playingSongId !== currentSong?.id
-    const isWaitingForAudio = !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale)
+    const isWaitingForAudio = !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
     // Effective State for Render
     const isReveal = isRealReveal || isWaitingForAudio
 
