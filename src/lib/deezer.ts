@@ -1,9 +1,12 @@
 import { normalizeForSearch, scoreTrackMatch, normalizeForCompare } from './scoring'
 import fs from 'fs'
 import path from 'path'
+import os from 'os'
 
 const DEEZER_API = 'https://api.deezer.com/search'
 const CACHE = new Map<string, any>()
+const DEEZER_QUOTA_COOLDOWN_MS = 60_000
+let deezerQuotaBlockedUntil = 0
 
 type ResolvedTrack = {
     input: {
@@ -51,7 +54,16 @@ async function asyncPool<T>(poolLimit: number, items: any[], iteratorFn: (item: 
 
 // Retry Helper
 // Retry Helper
-async function fetchWithRetry(url: string, retries = 7): Promise<any> {
+function isQuotaExceededError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err || '')
+    return msg.includes('Quota Exceeded (Code 4)') || msg.includes('quota cooldown active')
+}
+
+async function fetchWithRetry(url: string, retries = 4): Promise<any> {
+    if (deezerQuotaBlockedUntil > Date.now()) {
+        throw new Error('Deezer API quota cooldown active')
+    }
+
     for (let i = 0; i < retries; i++) {
         try {
             // Next.js patches fetch() to cache by default. We MUST disable this for external APIs 
@@ -64,13 +76,14 @@ async function fetchWithRetry(url: string, retries = 7): Promise<any> {
             // Handle Deezer specific errors (Quota Limit)
             // Error: { type: 'Exception', message: 'Quota limit exceeded', code: 4 }
             if (data.error && data.error.code === 4) {
-                console.warn(`[Deezer] Quota limit exceeded. Retrying (${i + 1}/${retries})...`)
+                deezerQuotaBlockedUntil = Date.now() + DEEZER_QUOTA_COOLDOWN_MS
                 throw new Error('Deezer API Quota Exceeded (Code 4)')
             }
 
             return data
         } catch (err: any) {
             console.warn(`[Deezer] Fetch attempt ${i + 1} failed for ${url}: ${err.message}`)
+            if (isQuotaExceededError(err)) throw err
             if (i === retries - 1) throw err
             // Exponential backoff: 1s, 2s... up to 7s
             await new Promise(r => setTimeout(r, 1000 * (i + 1)))
@@ -166,6 +179,18 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
             }
         } catch (e: any) {
             console.warn(`[Resolver] ISRC Lookup Failed for ${track.isrc}:`, e.message)
+            if (isQuotaExceededError(e)) {
+                const result: ResolvedTrack = {
+                    input: track,
+                    resolved: false,
+                    score: -100,
+                    warnings: ['Deezer quota exceeded'],
+                    candidates: [],
+                    debug: { queriesUsed, candidatesFound: 0 }
+                }
+                CACHE.set(cacheKey, result)
+                return result
+            }
         }
     }
 
@@ -182,6 +207,7 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
         } catch (e: any) {
             console.warn(`[Deezer] Search failed for ${q}:`, e)
             lastError = e.message
+            if (isQuotaExceededError(e)) break
         }
     }
 
@@ -339,7 +365,7 @@ export async function resolvePlaylist(tracks: any[], clearLog: boolean = false):
     // --- Generate Debug Report ---
     const failures = results.filter(r => !r.resolved)
     if (failures.length > 0) {
-        const logPath = path.join(process.cwd(), 'import_debug.txt')
+        const logPath = path.join(os.tmpdir(), 'import_debug.txt')
         const timestamp = new Date().toISOString()
 
         let report = ''

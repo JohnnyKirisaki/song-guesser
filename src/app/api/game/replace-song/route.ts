@@ -5,22 +5,129 @@ import { SongItem } from '@/lib/game-logic'
 import { fetchLyrics } from '@/lib/lyrics'
 import { resolveSingleTrack } from '@/lib/deezer'
 
+const normalizePreview = (url: string) => url.replace(/^http:\/\//i, 'https://').trim()
+
+const isPreviewExpiringSoon = (url: string, leewaySeconds = 90) => {
+    const matchExp = url.match(/exp=(\d+)/)
+    if (!matchExp) return false
+    const expTime = parseInt(matchExp[1], 10)
+    if (!expTime || Number.isNaN(expTime)) return false
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    return expTime <= nowSeconds + leewaySeconds
+}
+
+const hasUsablePreview = (url?: string | null) => {
+    if (typeof url !== 'string') return false
+    const normalized = normalizePreview(url)
+    if (!normalized.startsWith('http')) return false
+    return !isPreviewExpiringSoon(normalized)
+}
+
 export async function POST(request: Request) {
     try {
         const { roomCode, roundIndex } = await request.json()
+        const parsedRoundIndex = Number(roundIndex)
+
+        if (!roomCode || Number.isNaN(parsedRoundIndex) || parsedRoundIndex < 0) {
+            return NextResponse.json({ error: 'Missing/invalid roomCode or roundIndex' }, { status: 400 })
+        }
 
         const roomRef = ref(db, `rooms/${roomCode}`)
-        const roomSnap = await get(roomRef)
+        const secretRef = ref(db, `room_secrets/${roomCode}/${parsedRoundIndex}`)
+        const [roomSnap, secretSnap] = await Promise.all([get(roomRef), get(secretRef)])
         const roomData = roomSnap.val()
 
         if (!roomData) return NextResponse.json({ error: 'Room not found' }, { status: 404 })
+        if (!secretSnap.exists()) return NextResponse.json({ error: 'Secret song not found for round' }, { status: 404 })
 
         const allSongs = Object.values(roomData.songs || {}) as SongItem[]
+        const secretSong = secretSnap.val() as SongItem
+        const isLyricsOnly = roomData.settings?.mode === 'lyrics_only'
+        const isSuddenDeath = !!roomData.game_state?.is_sudden_death
+
+        const toPublicPlaylistSong = (song: SongItem) => {
+            if (!isSuddenDeath) return song
+            return {
+                id: song.id,
+                picked_by_user_id: song.picked_by_user_id,
+                preview_url: song.preview_url,
+                artist_name: '???',
+                track_name: '???',
+                cover_url: '',
+                spotify_uri: ''
+            }
+        }
+
+        const ensurePlayableSong = async (song: SongItem): Promise<SongItem | null> => {
+            const preview = typeof song.preview_url === 'string' ? normalizePreview(song.preview_url) : ''
+            if (hasUsablePreview(preview)) {
+                return { ...song, preview_url: preview }
+            }
+
+            const resolved = await resolveSingleTrack({
+                artist: song.artist_name,
+                title: song.track_name
+            })
+            const resolvedPreview = resolved?.deezer?.preview_url
+                ? normalizePreview(resolved.deezer.preview_url)
+                : ''
+
+            if (!hasUsablePreview(resolvedPreview)) {
+                return null
+            }
+
+            return {
+                ...song,
+                preview_url: resolvedPreview,
+                spotify_uri: resolved?.deezer?.id || song.spotify_uri
+            }
+        }
+
+        const applySongAtRound = async (
+            song: SongItem,
+            kind: 'refreshed' | 'replaced',
+            lyrics: string | null = null
+        ) => {
+            const updates: Record<string, unknown> = {
+                [`room_secrets/${roomCode}/${parsedRoundIndex}`]: song,
+                [`rooms/${roomCode}/game_state/playlist/${parsedRoundIndex}`]: toPublicPlaylistSong(song),
+                [`rooms/${roomCode}/songs/${song.id}/preview_url`]: song.preview_url
+            }
+            if (song.spotify_uri) {
+                updates[`rooms/${roomCode}/songs/${song.id}/spotify_uri`] = song.spotify_uri
+            }
+            if (lyrics) {
+                updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] = lyrics
+            }
+
+            await update(ref(db), updates)
+            return NextResponse.json({ success: true, kind, song })
+        }
+
+        // 1) Try to keep the same song by refreshing/repairing its preview.
+        const refreshedSecret = await ensurePlayableSong(secretSong)
+        if (refreshedSecret) {
+            if (isLyricsOnly) {
+                let lyrics = roomData.lyrics_cache?.[refreshedSecret.id] || null
+                if (!lyrics) {
+                    lyrics = await fetchLyrics(refreshedSecret.artist_name, refreshedSecret.track_name)
+                }
+                if (!lyrics) {
+                    // If lyrics mode and we can't get lyrics, fall through to replacement search.
+                } else {
+                    return applySongAtRound(refreshedSecret, 'refreshed', lyrics)
+                }
+            } else {
+                return applySongAtRound(refreshedSecret, 'refreshed')
+            }
+        }
+
         const usedSongIds = new Set<string>()
 
         // Collect used IDs from playlist
-        const playlist = roomData.game_state?.playlist || []
-        playlist.forEach((s: SongItem) => usedSongIds.add(s.id))
+        const playlistRaw = roomData.game_state?.playlist || []
+        const playlistItems = Array.isArray(playlistRaw) ? playlistRaw : Object.values(playlistRaw)
+        playlistItems.forEach((s: SongItem) => usedSongIds.add(s.id))
 
         // Find standard replacement
         const pool = allSongs.filter(s => !usedSongIds.has(s.id)).sort(() => 0.5 - Math.random())
@@ -35,31 +142,17 @@ export async function POST(request: Request) {
         let lyrics: string | null = null
 
         // Try to find one with audio (and lyrics if needed)
-        const isLyricsOnly = roomData.settings?.mode === 'lyrics_only'
-
         for (const candidate of pool) {
-            // Check Audio FIRST (since that's why we are replacing)
-            // If masked (no preview_url), try to resolve it now on server side?
-            // Or just trust it works? 
-            // Better to verify it resolves.
-            let preview = candidate.preview_url
-            if (!preview) {
-                const resolved = await resolveSingleTrack({
-                    artist: candidate.artist_name,
-                    title: candidate.track_name
-                })
-                preview = resolved.deezer?.preview_url || null
-            }
-
-            if (!preview) continue // helper needs audio!
+            const playableCandidate = await ensurePlayableSong(candidate)
+            if (!playableCandidate?.preview_url) continue
 
             if (isLyricsOnly) {
-                const l = await fetchLyrics(candidate.artist_name, candidate.track_name)
+                const l = await fetchLyrics(playableCandidate.artist_name, playableCandidate.track_name)
                 if (!l) continue
                 lyrics = l
             }
 
-            replacement = { ...candidate, preview_url: preview }
+            replacement = playableCandidate
             break
         }
 
@@ -67,29 +160,10 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Could not find a valid replacement with audio' }, { status: 500 })
         }
 
-        const updates: Record<string, any> = {}
-
-        // Replace in Playlist
-        updates[`rooms/${roomCode}/game_state/playlist/${roundIndex}`] = {
-            ...replacement,
-            artist_name: '???',
-            track_name: '???',
-            cover_url: '',
-            spotify_uri: replacement.spotify_uri || '' // Unmasked
-        }
-
-        // Update Secret
-        updates[`room_secrets/${roomCode}/${roundIndex}`] = replacement
-
-        if (lyrics) {
-            updates[`rooms/${roomCode}/lyrics_cache/${replacement.id}`] = lyrics
-        }
-
-        await update(ref(db), updates)
-
-        return NextResponse.json({ success: true, song: replacement })
-    } catch (e: any) {
+        return applySongAtRound(replacement, 'replaced', lyrics)
+    } catch (e: unknown) {
         console.error('Replace Song Error:', e)
-        return NextResponse.json({ error: e.message }, { status: 500 })
+        const message = e instanceof Error ? e.message : 'Unknown error'
+        return NextResponse.json({ error: message }, { status: 500 })
     }
 }

@@ -64,7 +64,6 @@ export default function GamePage() {
     const [retryTrigger, setRetryTrigger] = useState(0) // Retry counter for failed audio
     const [isBulletRound, setIsBulletRound] = useState(false)
     const [playingSongId, setPlayingSongId] = useState<string | null>(null) // Track which song is ACTUALLY playing
-    const [audioGiveUp, setAudioGiveUp] = useState(false) // Safety valve: if audio takes too long, give up waiting
 
     const { volume } = useVolume()
     const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
@@ -209,7 +208,7 @@ export default function GamePage() {
         return { previewToUse, hasValidPreview, isExpiredSoon }
     }
 
-    const prefetchSongPreview = (song: SongItem): Promise<string | null> => {
+    const prefetchSongPreview = (song: SongItem, force: boolean = false): Promise<string | null> => {
         const { previewToUse, hasValidPreview, isExpiredSoon } = getPreviewStatus(song)
         if (hasValidPreview && !isExpiredSoon) return Promise.resolve(previewToUse || null)
 
@@ -220,7 +219,7 @@ export default function GamePage() {
         if (existing) return existing
 
         const lastPrefetchAt = audioPrefetchRef.current[prefetchKey] || 0
-        if (Date.now() - lastPrefetchAt < 10000) return Promise.resolve(null)
+        if (!force && Date.now() - lastPrefetchAt < 10000) return Promise.resolve(null)
 
         if (audioPrefetchInFlightRef.current[prefetchKey]) {
             return audioPrefetchPromisesRef.current[prefetchKey] || Promise.resolve(null)
@@ -247,6 +246,56 @@ export default function GamePage() {
 
         audioPrefetchPromisesRef.current[prefetchKey] = p
         return p
+    }
+
+    const waitMs = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+    const ensureRoundAudioReady = async (roomCode: string, roundIndex: number): Promise<boolean> => {
+        const retryDelayMs = 5000
+
+        while (true) {
+            const liveState = gameStateRef.current
+            if (!liveState || liveState.phase !== 'reveal') return false
+
+            const liveSong = liveState.playlist?.[roundIndex]
+            if (!liveSong) return false
+
+            const status = getPreviewStatus(liveSong)
+            if (status.hasValidPreview && !status.isExpiredSoon) {
+                return true
+            }
+
+            const prefetched = await prefetchSongPreview(liveSong, true)
+            if (prefetched) {
+                return true
+            }
+
+            try {
+                const repairRes = await fetch('/api/game/replace-song', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ roomCode, roundIndex })
+                })
+                const repairData = await repairRes.json().catch(() => ({}))
+                if (!repairRes.ok) {
+                    console.warn(`[Audio Gate] Repair failed (${repairRes.status}): ${repairData?.error || 'unknown'}`)
+                } else {
+                    // Give Firebase listeners a moment to receive updated preview/song data.
+                    await waitMs(1000)
+                    const refreshed = gameStateRef.current?.playlist?.[roundIndex]
+                    if (refreshed) {
+                        const refreshedStatus = getPreviewStatus(refreshed)
+                        if (refreshedStatus.hasValidPreview && !refreshedStatus.isExpiredSoon) {
+                            return true
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[Audio Gate] Repair request failed:', e)
+            }
+
+            await waitMs(retryDelayMs)
+        }
     }
 
     // Sync Clock Skew
@@ -742,7 +791,6 @@ export default function GamePage() {
     useEffect(() => {
         setAudioStatus('idle')
         setAudioLoadError(false)
-        setAudioGiveUp(false)
         setIsBulletRound(false)
     }, [currentSong?.id])
 
@@ -1012,16 +1060,7 @@ export default function GamePage() {
 
         hasScheduledNextRoundRef.current = true
 
-        const nextSong = gameState.playlist?.[gameState.current_round_index + 1]
-        const shouldPrefetchNext = nextSong
-            ? (() => {
-                const status = getPreviewStatus(nextSong)
-                return !status.hasValidPreview || status.isExpiredSoon
-            })()
-            : false
-
         const revealMs = 5000
-        const prefetchMaxWaitMs = 3000
 
         setTimeout(async () => {
             const currentGameState = gameStateRef.current
@@ -1031,11 +1070,14 @@ export default function GamePage() {
 
             const code = params.code as string
 
-            if (shouldPrefetchNext && nextSong) {
-                await Promise.race([
-                    prefetchSongPreview(nextSong),
-                    new Promise(resolve => setTimeout(resolve, prefetchMaxWaitMs))
-                ])
+            const nextRoundIndex = currentGameState.current_round_index + 1
+            const nextSong = currentGameState.playlist?.[nextRoundIndex]
+            if (nextSong) {
+                const ready = await ensureRoundAudioReady(code, nextRoundIndex)
+                if (!ready) {
+                    hasScheduledNextRoundRef.current = false
+                    return
+                }
             }
 
             await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
@@ -1077,6 +1119,17 @@ export default function GamePage() {
                     const currentGameState = gameStateRef.current
                     const currentPlayers = playersRef.current
                     if (!currentGameState || !currentPlayers) return
+
+                    const nextRoundIndex = currentGameState.current_round_index + 1
+                    const nextSong = currentGameState.playlist?.[nextRoundIndex]
+                    if (nextSong) {
+                        const ready = await ensureRoundAudioReady(code, nextRoundIndex)
+                        if (!ready) {
+                            hasScheduledNextRoundRef.current = false
+                            return
+                        }
+                    }
+
                     await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
                 }, delay)
             })
@@ -1222,7 +1275,7 @@ export default function GamePage() {
 
     // Treat 'error' as waiting, AND if we are 'playing' but the song ID doesn't match current (stale audio), we are waiting.
     const isAudioStale = audioStatus === 'playing' && playingSongId !== currentSong?.id
-    const isWaitingForAudio = !audioGiveUp && !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale)
+    const isWaitingForAudio = !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale)
     // Effective State for Render
     const isReveal = isRealReveal || isWaitingForAudio
 
