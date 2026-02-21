@@ -250,6 +250,48 @@ export default function GamePage() {
 
     const waitMs = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
+    const probePreviewPlayable = (url: string, timeoutMs = 10000): Promise<boolean> => {
+        return new Promise((resolve) => {
+            if (!url) {
+                resolve(false)
+                return
+            }
+
+            let settled = false
+            const audio = new Audio()
+            audio.preload = 'auto'
+            audio.muted = true
+
+            const done = (ok: boolean) => {
+                if (settled) return
+                settled = true
+                clearTimeout(timer)
+                audio.removeEventListener('canplay', onReady)
+                audio.removeEventListener('loadedmetadata', onReady)
+                audio.removeEventListener('error', onError)
+                try {
+                    audio.pause()
+                    audio.src = ''
+                    audio.load()
+                } catch {
+                    // No-op cleanup.
+                }
+                resolve(ok)
+            }
+
+            const onReady = () => done(true)
+            const onError = () => done(false)
+
+            const timer = setTimeout(() => done(false), timeoutMs)
+
+            audio.addEventListener('canplay', onReady, { once: true })
+            audio.addEventListener('loadedmetadata', onReady, { once: true })
+            audio.addEventListener('error', onError, { once: true })
+            audio.src = url
+            audio.load()
+        })
+    }
+
     const ensureRoundAudioReady = async (roomCode: string, roundIndex: number): Promise<boolean> => {
         const retryDelayMs = 5000
 
@@ -262,12 +304,14 @@ export default function GamePage() {
 
             const status = getPreviewStatus(liveSong)
             if (status.hasValidPreview && !status.isExpiredSoon) {
-                return true
+                const playable = await probePreviewPlayable(status.previewToUse, 12000)
+                if (playable) return true
             }
 
             const prefetched = await prefetchSongPreview(liveSong, true)
             if (prefetched) {
-                return true
+                const playable = await probePreviewPlayable(prefetched, 12000)
+                if (playable) return true
             }
 
             try {
@@ -286,7 +330,8 @@ export default function GamePage() {
                     if (refreshed) {
                         const refreshedStatus = getPreviewStatus(refreshed)
                         if (refreshedStatus.hasValidPreview && !refreshedStatus.isExpiredSoon) {
-                            return true
+                            const playable = await probePreviewPlayable(refreshedStatus.previewToUse, 12000)
+                            if (playable) return true
                         }
                     }
                 }
