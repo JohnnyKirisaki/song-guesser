@@ -1348,10 +1348,9 @@ export default function GamePage() {
     const isReveal = isRealReveal || isWaitingForAudio
 
     // If waiting for audio, show PREVIOUS song, not current.
-    // If round index is 0, we can't show previous, so just show current (loading)
-    const effectiveSong = isWaitingForAudio && gameState.current_round_index > 0
-        ? gameState.playlist[gameState.current_round_index - 1]
-        : currentSong
+    // If round index is 0 or if the previous song is missing from the playlist, fallback to currentSong to prevent crashes
+    const previousSong = gameState.current_round_index > 0 ? gameState.playlist[gameState.current_round_index - 1] : null
+    const effectiveSong = (isWaitingForAudio && previousSong) ? previousSong : currentSong
 
     const displayRound = gameState.is_sudden_death ? (roomSettings?.rounds || (gameState.current_round_index + 1)) : (gameState.current_round_index + 1)
     const displayPlayers = (isSuddenDeath && duelingIds.length > 0)
