@@ -45,7 +45,17 @@ export async function POST(request: Request) {
         const usedSongIds = new Set((gameState.playlist || []).map((s: any) => s.id).filter(Boolean))
 
         const normalizePreviewUrl = (url: string) => url.replace(/^http:\/\//i, 'https://').trim()
-        const isValidPreview = (url?: string | null) => typeof url === 'string' && url.trim().startsWith('http')
+        const isValidPreview = (url?: string | null) => {
+            if (typeof url !== 'string' || !url.trim().startsWith('http')) return false
+            const expMatch = url.match(/exp=(\d+)/)
+            if (expMatch) {
+                const expTime = parseInt(expMatch[1], 10)
+                const nowSeconds = Math.floor(Date.now() / 1000)
+                // Require at least 2 minutes of validity
+                if (expTime < nowSeconds + 120) return false
+            }
+            return true
+        }
 
         const buildMaskedPlaylistEntry = (song: SongItem) => ({
             id: song.id,
