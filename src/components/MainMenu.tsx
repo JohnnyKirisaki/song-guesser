@@ -103,7 +103,7 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
             }}>
                 {/* Stats (Top Left) */}
                 <div className="glass-panel" style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Trophy size={16} color="var(--tertiary)" />
+                    <Trophy size={16} color="#FFD700" />
                     <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{profile.wins ?? 0} Wins</span>
                 </div>
 
@@ -312,19 +312,19 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
 
                 {/* Content Panel */}
                 <div
+                    className="glass-panel"
                     style={{
                         width: isSidebarOpen ? '320px' : '0px',
                         height: '500px',
                         overflow: 'hidden',
-                        transition: 'width 0.3s ease',
-                        background: 'rgba(0, 0, 0, 0.4)',
-                        backdropFilter: 'blur(16px)',
+                        transition: 'all 0.3s ease',
                         borderTopLeftRadius: '16px',
                         borderBottomLeftRadius: '16px',
-                        borderTop: isSidebarOpen ? '1px solid var(--glass-border)' : 'none',
-                        borderBottom: isSidebarOpen ? '1px solid var(--glass-border)' : 'none',
-                        borderLeft: isSidebarOpen ? '1px solid var(--glass-border)' : 'none',
+                        borderTopRightRadius: '0',
+                        borderBottomRightRadius: '0',
                         borderRight: 'none',
+                        borderWidth: isSidebarOpen ? '1px' : '0px',
+                        opacity: isSidebarOpen ? 1 : 0
                     }}
                 >
                     <div style={{ width: '320px', height: '100%', padding: '16px' }}>

@@ -82,8 +82,6 @@ export async function processNextRound(
                     })
                     return
                 }
-            } else {
-                // Duel continues
             }
         }
     }
@@ -99,33 +97,39 @@ export async function processNextRound(
         const tieGroup = getFirstTieGroup(players, resolvedGroups)
         if (tieGroup.length > 1) {
             await initiateSuddenDeath(roomCode, tieGroup, gameState, players, Array.from(resolvedGroups))
+            return
         } else {
             await update(ref(db, `rooms/${roomCode}`), {
                 status: 'finished',
                 'game_state/phase': 'end',
                 'game_state/end_time': Date.now()
             })
+            return
         }
-    } else {
-        // Next Round (Normal or Sudden Death continues)
-        // If we are in SD and didn't trigger game over, we default here to next song
-        const nextRound = gameState.current_round_index + 1
-
-        await update(ref(db, `rooms/${roomCode}`), {
-            'game_state/phase': 'playing',
-            'game_state/current_round_index': nextRound,
-            // Do NOT set round_start_time yet. Allow Host to sync audio before timer starts.
-            'game_state/round_start_time': null,
-            'game_state/force_reveal_at': null, // Clear any force reveal
-            // Reset submissions
-            ...Object.fromEntries(players.map(p => [`players/${p.id}/has_submitted`, false])),
-            ...Object.fromEntries(players.map(p => [`players/${p.id}/last_guess`, null])),
-            ...Object.fromEntries(players.map(p => [`players/${p.id}/last_round_score`, 0])),
-            ...Object.fromEntries(players.map(p => [`players/${p.id}/last_round_correct_artist`, false])),
-            ...Object.fromEntries(players.map(p => [`players/${p.id}/last_round_correct_title`, false]))
-        })
-
-        // Sudden death top-ups are handled during reveal to keep
-        // "Next Round" fast and move fetch work off the click path.
     }
+
+    // Next Round (Normal or Sudden Death continues)
+    const nextRound = gameState.current_round_index + 1
+
+    const updates: any = {
+        'game_state/phase': 'playing',
+        'game_state/current_round_index': nextRound,
+        // Do NOT set round_start_time yet. Allow Host to sync audio before timer starts.
+        'game_state/round_start_time': null,
+        'game_state/force_reveal_at': null, // Clear any force reveal
+    }
+
+    // Reset player submissions
+    players.forEach(p => {
+        updates[`players/${p.id}/has_submitted`] = false
+        updates[`players/${p.id}/submitted_at`] = null
+        updates[`players/${p.id}/last_guess`] = null
+        updates[`players/${p.id}/last_round_score`] = 0
+        updates[`players/${p.id}/last_round_points`] = 0
+        updates[`players/${p.id}/last_round_time_taken`] = null
+        updates[`players/${p.id}/last_round_correct_artist`] = null
+        updates[`players/${p.id}/last_round_correct_title`] = null
+    })
+
+    await update(ref(db, `rooms/${roomCode}`), updates)
 }

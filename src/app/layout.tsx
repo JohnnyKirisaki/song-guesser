@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import './globals.css'
+import './globals-holo.css'
 import { UserProvider } from '@/context/UserContext'
 import { VolumeProvider } from '@/context/VolumeContext'
 import VolumeSlider from '@/components/VolumeSlider'
@@ -21,6 +21,7 @@ export default function RootLayout({
           <VolumeProvider>
             {children}
             <VolumeSlider />
+            <div className="noise-overlay" />
           </VolumeProvider>
         </UserProvider>
       </body>

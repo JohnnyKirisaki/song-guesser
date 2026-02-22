@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { auth, db } from '@/lib/firebase'
 import { signInAnonymously, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth'
-import { ref, update, get } from 'firebase/database'
+import { ref, update, get, onValue, onDisconnect } from 'firebase/database'
 
 type UserProfile = {
     id: string
@@ -29,6 +29,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const [isLoading, setIsLoading] = useState(true)
 
     useEffect(() => {
+        let unsubConnected: () => void = () => { }
+
         // Listen for auth state changes
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             setUser(currentUser)
@@ -37,8 +39,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 // Fetch Profile from RTDB
                 const profileRef = ref(db, `profiles/${currentUser.uid}`)
                 try {
-                const snapshot = await get(profileRef)
-                if (snapshot.exists()) {
+                    const snapshot = await get(profileRef)
+                    if (snapshot.exists()) {
                         const data = snapshot.val()
                         setProfile({
                             ...data,
@@ -51,14 +53,30 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 } catch (e) {
                     console.error("Error fetching profile:", e)
                 }
+
+                // Presence System
+                const connectedRef = ref(db, '.info/connected')
+                const onlineRef = ref(db, `users/${currentUser.uid}/is_online`)
+
+                unsubConnected = onValue(connectedRef, (snap) => {
+                    if (snap.val() === true) {
+                        onDisconnect(onlineRef).set(false).then(() => {
+                            update(ref(db), { [`users/${currentUser.uid}/is_online`]: true })
+                        })
+                    }
+                })
             } else {
                 setProfile(null)
+                unsubConnected()
             }
 
             setIsLoading(false)
         })
 
-        return () => unsubscribe()
+        return () => {
+            unsubscribe()
+            unsubConnected()
+        }
     }, [])
 
     const signIn = async (username: string, avatarUrl: string) => {

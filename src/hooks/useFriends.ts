@@ -10,6 +10,7 @@ export type FriendUser = {
     username?: string
     avatar_url?: string
     status: FriendStatus
+    is_online?: boolean
     hosting?: {
         roomCode: string
         created_at: number
@@ -118,6 +119,18 @@ export function useFriends() {
                     }
                 })
                 listeners.push(unsubHosting)
+
+                // C. Listen to Online Status (Real-time)
+                const onlineRef = ref(db, `users/${fid}/is_online`)
+                const unsubOnline = onValue(onlineRef, (oSnap) => {
+                    const isOnline = oSnap.val() === true
+                    const current = friendsMap.get(fid)
+                    if (current) {
+                        friendsMap.set(fid, { ...current, is_online: isOnline })
+                        broadcastUpdate()
+                    }
+                })
+                listeners.push(unsubOnline)
             })
         })
 

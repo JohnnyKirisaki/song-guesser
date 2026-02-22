@@ -66,24 +66,30 @@ export default function FriendList({ currentUserId, minimal = false }: FriendLis
 
     return (
         <div className={minimal ? '' : 'glass-panel'} style={{ width: '100%', padding: minimal ? '0' : '24px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingBottom: minimal ? '12px' : '0', borderBottom: minimal ? '1px solid rgba(255,255,255,0.1)' : 'none' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingBottom: minimal ? '12px' : '0', borderBottom: minimal ? '1px solid var(--glass-border)' : 'none' }}>
                 <Users className="text-primary" size={24} color="var(--primary)" />
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Friends ({friends.length})</h2>
             </div>
 
             {friends.length === 0 ? (
-                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: '12px' }}>
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', border: '1px dashed var(--glass-border-light)', borderRadius: '12px' }}>
                     No friends yet. Play a game and click an avatar to add one!
                 </div>
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, overflowY: 'auto' }}>
-                    {friends.map(friend => (
+                    {[...friends].sort((a, b) => {
+                        if (a.is_online && !b.is_online) return -1
+                        if (!a.is_online && b.is_online) return 1
+                        return (a.username || '').localeCompare(b.username || '')
+                    }).map(friend => (
                         <div
                             key={friend.id}
+                            className="glass-panel"
                             style={{
                                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px',
-                                border: '1px solid rgba(255,255,255,0.05)'
+                                padding: '12px 16px', borderRadius: '16px',
+                                boxShadow: 'none',
+                                opacity: friend.is_online ? 1 : 0.6
                             }}
                         >
                             <div
@@ -91,15 +97,23 @@ export default function FriendList({ currentUserId, minimal = false }: FriendLis
                                 onClick={(e) => openUserMenu(friend, e)}
                                 onContextMenu={(e) => openUserMenu(friend, e)}
                             >
-                                <img
-                                    src={friend.avatar_url || 'https://via.placeholder.com/40'}
-                                    alt={friend.username}
-                                    style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }}
-                                />
+                                <div style={{ position: 'relative' }}>
+                                    <img
+                                        src={friend.avatar_url || 'https://via.placeholder.com/40'}
+                                        alt={friend.username}
+                                        style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover', filter: friend.is_online ? 'none' : 'grayscale(100%)' }}
+                                    />
+                                    {friend.is_online && (
+                                        <div style={{
+                                            position: 'absolute', bottom: 0, right: 0, width: '12px', height: '12px',
+                                            background: '#2ef2a0', borderRadius: '50%', border: '2px solid #111'
+                                        }} />
+                                    )}
+                                </div>
                                 <div>
                                     <div style={{ fontWeight: 600 }}>{friend.username}</div>
                                     <div style={{ fontSize: '0.8rem', color: friend.hosting ? 'var(--primary)' : 'var(--text-muted)' }}>
-                                        {friend.hosting ? 'Hosting a Lobby' : ''}
+                                        {friend.hosting ? 'Hosting a Lobby' : (friend.is_online ? 'Online' : 'Offline')}
                                     </div>
                                 </div>
                             </div>
@@ -107,7 +121,7 @@ export default function FriendList({ currentUserId, minimal = false }: FriendLis
                             {friend.hosting && (
                                 <button
                                     className="btn-primary"
-                                    style={{ padding: '6px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                    style={{ padding: '6px 16px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
                                     onClick={() => router.push(`/room/${friend.hosting?.roomCode}`)}
                                 >
                                     <LogIn size={14} /> Join

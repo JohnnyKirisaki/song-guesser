@@ -8,10 +8,11 @@ import { useUser } from '@/context/UserContext'
 import { GameState, SongItem } from '@/lib/game-logic'
 import { useVolume } from '@/context/VolumeContext'
 
-import { Music, Check } from 'lucide-react'
+import { Music, Check, Mic2, Disc, FileText, Zap } from 'lucide-react'
 import ProgressBar from '@/components/ProgressBar'
 import { soundManager } from '@/lib/sounds'
 import { processNextRound } from '@/lib/game-round-manager'
+import { useColor } from 'color-thief-react'
 import EmoteBar from '@/components/EmoteBar'
 import Onboarding from '@/components/Onboarding'
 import GameRecap from '@/components/GameRecap'
@@ -68,6 +69,43 @@ export default function GamePage() {
     const { volume } = useVolume()
     const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
     const [menuAnchor, setMenuAnchor] = useState<{ x: number, y: number } | null>(null)
+
+    // Derived State Needed for useColor at top-level
+    const currentSongTemp = gameState?.playlist[gameState?.current_round_index || 0]
+    const isLyricsOnlyTemp = roomSettings?.mode === 'lyrics_only'
+    const isRealRevealTemp = gameState?.phase === 'reveal'
+    const isAudioStaleTemp = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
+    const isWaitingForAudioTemp = !isLyricsOnlyTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStaleTemp || !gameState.round_start_time)
+    const previousSongTemp = (gameState?.current_round_index || 0) > 0 ? gameState?.playlist[(gameState?.current_round_index || 0) - 1] : null
+    const effectiveSongTemp = (isWaitingForAudioTemp && previousSongTemp) ? previousSongTemp : currentSongTemp
+
+    // --------------------------------------------------------------------------------
+    // COLOR EXTRACTION (Dynamic Backgrounds) - MUST BE BEFORE EARLY RETURNS
+    // --------------------------------------------------------------------------------
+    const { data: dominantColor } = useColor(
+        effectiveSongTemp?.cover_url || '/placeholder-cover.jpg',
+        'rgbString',
+        { crossOrigin: 'anonymous', quality: 10 }
+    )
+
+    // Only apply the dynamic color during the REVEAL phase. Otherwise, fallback to Spotify Green/Theme default.
+    const dynamicFlare1Temp = isRealRevealTemp || (gameState?.phase === 'reveal')
+        ? (dominantColor ? dominantColor.replace('rgb', 'rgba').replace(')', ', 0.6)') : 'rgba(29, 185, 84, 0.6)')
+        : 'rgba(46, 242, 160, 0.5)'
+
+    const dynamicFlare2Temp = isRealRevealTemp || (gameState?.phase === 'reveal')
+        ? (dominantColor ? dominantColor.replace('rgb', 'rgba').replace(')', ', 0.4)') : 'rgba(30, 215, 96, 0.4)')
+        : 'rgba(29, 185, 84, 0.4)'
+
+    const dynamicFlare3Temp = isRealRevealTemp || (gameState?.phase === 'reveal')
+        ? (dominantColor ? dominantColor.replace('rgb', 'rgba').replace(')', ', 0.3)') : 'rgba(29, 185, 84, 0.3)')
+        : 'rgba(16, 133, 59, 0.3)'
+
+    useEffect(() => {
+        document.documentElement.style.setProperty('--flare-1', dynamicFlare1Temp)
+        document.documentElement.style.setProperty('--flare-2', dynamicFlare2Temp)
+        document.documentElement.style.setProperty('--flare-3', dynamicFlare3Temp)
+    }, [dynamicFlare1Temp, dynamicFlare2Temp, dynamicFlare3Temp])
 
     const openUserMenu = (user: Player, event: MouseEvent) => {
         event.preventDefault()
@@ -597,6 +635,20 @@ export default function GamePage() {
         fetchLyricsForSong(nextSong, false)
     }, [gameState?.current_round_index, isLyricsOnly, gameState?.playlist])
 
+    // --------------------------------------------------------------------------------
+    // 3. COLOR EXTRACTION (Dynamic Backgrounds)
+    // --------------------------------------------------------------------------------
+    // Moved to section 5 (Render) to avoid "used before declaration" on effectiveSong.
+
+    // Helper to get the correct icon for the placeholder vinyl
+    const ModeIcon = () => {
+        if (isArtistOnly) return <Mic2 size={48} className="glow-icon" />
+        if (isSongOnly) return <Disc size={48} className="glow-icon" />
+        if (isLyricsOnly) return <FileText size={48} className="glow-icon" />
+        if (gameState?.is_sudden_death) return <Zap size={48} color="#FFD700" className="glow-icon" />
+        return <Music size={48} className="glow-icon" />
+    }
+
     // Reset audio retry state per song to avoid stale "already retried" blocks
     useEffect(() => {
         audioRetryRef.current = {}
@@ -908,8 +960,15 @@ export default function GamePage() {
 
     // Timer Countdown (Synced with Server Time + Skew)
     useEffect(() => {
-        if (gameState?.phase === 'playing' && gameState.round_start_time) {
-            const totalTime = roomSettings?.time || 15
+        const totalTime = roomSettings?.time || 15
+
+        if (gameState?.phase === 'playing') {
+            if (!gameState.round_start_time) {
+                // Waiting for Audio Sync before starting timer
+                setTimeLeft(totalTime)
+                return
+            }
+
             const startRaw = gameState.round_start_time
             const getStartMs = () => typeof startRaw === 'number' ? startRaw : (startRaw ? new Date(startRaw).getTime() : NaN)
             const startMs = getStartMs()
@@ -1026,10 +1085,10 @@ export default function GamePage() {
     // Auto-Submit when time runs out (Client Side)
     // Trigger at 0, relying on Host grace period to accept it
     useEffect(() => {
-        if (gameState?.phase === 'playing' && timeLeft <= 0 && !hasSubmitted && isDuelingPlayer) {
+        if (gameState?.phase === 'playing' && gameState.round_start_time && timeLeft <= 0 && !hasSubmitted && isDuelingPlayer) {
             submitGuess()
         }
-    }, [gameState?.phase, timeLeft, hasSubmitted, isDuelingPlayer])
+    }, [gameState?.phase, gameState?.round_start_time, timeLeft, hasSubmitted, isDuelingPlayer])
 
     // --------------------------------------------------------------------------------
     // 4. HOST LOGIC (State Machine)
@@ -1339,18 +1398,23 @@ export default function GamePage() {
     const isRealReveal = gameState.phase === 'reveal'
 
     // If we are "playing" but audio is still loading, look like we are in reveal of PREVIOUS round
-    // Treat 'error' as waiting, AND if we are 'playing' but the song ID doesn't match current (stale audio), we are waiting.
+    const isAudioStale = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
+    const isWaitingForAudio = !isLyricsOnlyTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
 
-    // Treat 'error' as waiting, AND if we are 'playing' but the song ID doesn't match current (stale audio), we are waiting.
-    const isAudioStale = audioStatus === 'playing' && playingSongId !== currentSong?.id
-    const isWaitingForAudio = !isLyricsOnly && gameState.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
-    // Effective State for Render
-    const isReveal = isRealReveal || isWaitingForAudio
+    // Check if this is the very first moment of the game before round 1 actually starts playing
+    const isGameStartWaiting = isWaitingForAudio && gameState?.current_round_index === 0
+
+    // Effective State for Render - Do NOT show reveal screen if the game is just starting (prevents Round 0 "Wrong Answer" flash)
+    const isReveal = isRealReveal || (isWaitingForAudio && !isGameStartWaiting)
 
     // If waiting for audio, show PREVIOUS song, not current.
-    // If round index is 0 or if the previous song is missing from the playlist, fallback to currentSong to prevent crashes
     const previousSong = gameState.current_round_index > 0 ? gameState.playlist[gameState.current_round_index - 1] : null
     const effectiveSong = (isWaitingForAudio && previousSong) ? previousSong : currentSong
+
+    // Color variables derived at the top level are mapped here for inline style usage
+    const dynamicFlare1 = dynamicFlare1Temp
+    const dynamicFlare2 = dynamicFlare2Temp
+    const dynamicFlare3 = dynamicFlare3Temp
 
     const displayRound = gameState.is_sudden_death ? (roomSettings?.rounds || (gameState.current_round_index + 1)) : (gameState.current_round_index + 1)
     const displayPlayers = (isSuddenDeath && duelingIds.length > 0)
@@ -1359,7 +1423,131 @@ export default function GamePage() {
 
     return (
         <div className="game-shell" style={{ width: '100%', margin: '0 auto', paddingBottom: '28px', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+            <style jsx>{`
+                .vinyl-container {
+                    width: 250px;
+                    height: 250px;
+                    border-radius: 50%;
+                    position: relative;
+                    background: linear-gradient(135deg, #111, #000);
+                    box-shadow: 0 0 50px rgba(0, 0, 0, 0.8),
+                        inset 0 0 15px rgba(255, 255, 255, 0.05),
+                        inset 0 0 40px rgba(0, 0, 0, 0.9);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border: 1px solid rgba(255, 255, 255, 0.05);
+                    backdrop-filter: blur(20px);
+                }
 
+                .vinyl-container.spinning {
+                    animation: spin 3s linear infinite;
+                }
+
+                .vinyl-container.reveal {
+                    border: none;
+                    background: transparent;
+                }
+
+                .vinyl-grooves {
+                    position: absolute;
+                    top: 5%;
+                    left: 5%;
+                    width: 90%;
+                    height: 90%;
+                    border-radius: 50%;
+                    border: 1px solid rgba(255, 255, 255, 0.03);
+                    pointer-events: none;
+                    background:
+                        repeating-radial-gradient(circle at center,
+                            transparent,
+                            transparent 4px,
+                            rgba(255, 255, 255, 0.05) 5px,
+                            rgba(255, 255, 255, 0.02) 6px);
+                    transition: opacity 0.4s ease;
+                }
+
+                .vinyl-container.reveal .vinyl-grooves {
+                    opacity: 0;
+                }
+
+                .vinyl-container::after {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 50%;
+                    background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, transparent 40%, transparent 60%, rgba(255, 255, 255, 0.05) 100%);
+                    pointer-events: none;
+                    transition: opacity 0.4s ease;
+                }
+
+                .vinyl-container.reveal::after {
+                    opacity: 0;
+                }
+
+                .vinyl-label {
+                    width: 100px;
+                    height: 100px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.05);
+                    backdrop-filter: blur(10px);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    position: relative;
+                    overflow: hidden;
+                    border: 2px solid rgba(255, 255, 255, 0.1);
+                    transition: width 0.6s ease, height 0.6s ease;
+                }
+
+                .vinyl-label.reveal {
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 50%;
+                    border: none;
+                }
+
+                .vinyl-cover {
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
+                    opacity: 0;
+                    animation: revealCover 0.6s forwards ease-out;
+                    border-radius: 50%;
+                }
+
+                .glow-icon {
+                    opacity: 0.8;
+                    color: var(--primary);
+                    filter: drop-shadow(0 0 10px rgba(30, 215, 96, 0.8));
+                    animation: pulse-glow 2s infinite alternate ease-in-out;
+                }
+
+                @keyframes pulse-glow {
+                    0% {
+                        filter: drop-shadow(0 0 8px rgba(30, 215, 96, 0.5));
+                        transform: scale(0.95);
+                    }
+                    100% {
+                        filter: drop-shadow(0 0 20px rgba(30, 215, 96, 1));
+                        transform: scale(1.05);
+                    }
+                }
+
+                @keyframes revealCover {
+                    0% {
+                        opacity: 0;
+                        filter: blur(10px) brightness(0.5);
+                    }
+                    100% {
+                        opacity: 1;
+                        filter: blur(0) brightness(1);
+                    }
+                }
+            `}</style>
             {/* Top HUD */}
             <div className="game-hud">
                 <div className="hud-row">
@@ -1440,16 +1628,14 @@ export default function GamePage() {
                                 {isReveal ? (
                                     <img
                                         className="vinyl-cover"
-                                        src={effectiveSong.cover_url}
-                                        style={{
-                                            width: '100%', height: '100%', objectFit: 'cover',
-                                            borderRadius: '50%'
-                                        }}
+                                        src={effectiveSong.cover_url || '/placeholder-cover.jpg'}
+                                        onError={(e) => { e.currentTarget.src = '/placeholder-cover.jpg' }}
                                     />
                                 ) : (
-                                    <Music size={40} style={{ opacity: 0.3 }} />
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
+                                        <ModeIcon />
+                                    </div>
                                 )}
-                                <div className="vinyl-hole" />
                             </div>
                         </div>
                     )}

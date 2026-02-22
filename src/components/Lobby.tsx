@@ -306,7 +306,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                             display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px',
                             border: '1px solid', borderColor: p.is_ready ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
                             background: p.is_ready ? 'rgba(46, 242, 160, 0.08)' : 'rgba(255, 255, 255, 0.04)',
-                            cursor: 'pointer', transition: 'background 0.2s'
+                            cursor: 'pointer', transition: 'background 0.2s', height: '66px'
                         }}
                             onClick={(e) => openUserMenu(p, e)}
                             onContextMenu={(e) => openUserMenu(p, e)}
@@ -315,7 +315,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                         >
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                 <img src={p.avatar_url} alt={p.username} style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
-                                <div>
+                                <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                                     <div style={{ fontWeight: 700 }}>{p.username}</div>
                                     <div style={{ fontSize: '0.8rem', color: p.is_ready ? 'var(--primary)' : 'var(--text-muted)' }}>
                                         {p.is_importing
@@ -324,14 +324,15 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                     </div>
                                     {p.is_importing && (
                                         <div style={{
-                                            marginTop: '8px', height: '10px', width: '100%', maxWidth: '140px',
+                                            position: 'absolute', top: '100%', left: 0, marginTop: '2px',
+                                            height: '6px', width: '120px',
                                             background: 'rgba(255,255,255,0.1)', borderRadius: '999px', overflow: 'hidden',
-                                            boxShadow: '0 0 10px rgba(46, 242, 160, 0.2)'
+                                            boxShadow: '0 0 10px rgba(0, 0, 0, 0.5)'
                                         }}>
                                             <div style={{
                                                 height: '100%', width: `${Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))}%`,
-                                                background: 'linear-gradient(90deg, #2ef2a0, #3cb8ff)',
-                                                transition: 'width 0.3s ease-out'
+                                                background: `hsl(${Math.min(100, Math.max(0, p.import_progress ?? 0)) * 1.2}, 100%, 45%)`,
+                                                transition: 'width 0.3s ease-out, background 0.3s ease-out'
                                             }} />
                                         </div>
                                     )}
@@ -421,7 +422,16 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                             >
                                 {importing ? (
                                     <span className="import-progress">
-                                        <span className="import-progress__ring" style={{ ['--progress' as any]: importProgress }} />
+                                        <span
+                                            className="import-progress__ring"
+                                            style={{
+                                                ['--progress' as any]: importProgress,
+                                                borderTopColor: `hsl(${importProgress * 1.2}, 100%, 45%)`,
+                                                borderLeftColor: `hsl(${importProgress * 1.2}, 100%, 45%)`,
+                                                borderRightColor: 'transparent',
+                                                borderBottomColor: 'transparent'
+                                            }}
+                                        />
                                         <span className="import-progress__text">{importProgress}%</span>
                                     </span>
                                 ) : 'Import'}
@@ -490,7 +500,11 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                             onClick={startGame}
                             disabled={isStarting || players.some(p => p.is_importing)}
                             className="btn-primary"
-                            style={{ padding: '16px 48px', fontSize: '1.2rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}
+                            style={{
+                                padding: '16px 48px', fontSize: '1.2rem', width: '100%',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
+                                minHeight: '60px', height: '60px'
+                            }}
                         >
                             {isStarting ? (
                                 <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> {loadingMsg}</>
@@ -510,23 +524,22 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                 background: (creationProgress > 0) ? 'var(--bg-secondary)' : (currentPlayer?.is_ready ? 'rgba(46, 242, 160, 0.2)' : 'rgba(255, 255, 255, 0.04)'),
                                 color: (creationProgress > 0) ? 'white' : (currentPlayer?.is_ready ? 'white' : 'var(--text-muted)'),
                                 fontWeight: 700,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px'
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
+                                minHeight: '60px', height: '60px'
                             }}
                         >
                             {creationProgress > 0 ? (
                                 <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> STARTING...</>
                             ) : (
-                                currentPlayer?.is_ready ? 'READY!' : hasImported ? 'CLICK TO READY UP' : 'SKIP IMPORT / READY'
+                                currentPlayer?.is_ready
+                                    ? (players.some(p => p.is_importing) ? 'Waiting for other players...' : 'Waiting for host...')
+                                    : hasImported ? 'CLICK TO READY UP' : 'SKIP IMPORT / READY'
                             )}
                         </button>
                     )}
                 </div>
 
-                {!isHost && (
-                    <div style={{ textAlign: 'center', marginTop: '16px', color: 'var(--text-muted)' }}>
-                        {currentPlayer?.is_ready ? 'Waiting for host...' : 'Import songs or click Ready to skip.'}
-                    </div>
-                )}
+
             </div>
 
             {/* Delete Room Confirmation Modal */}
