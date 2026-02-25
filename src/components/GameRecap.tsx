@@ -62,6 +62,12 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     const [nextRoomCode, setNextRoomCode] = useState<string | null>(null)
     const [creatingRoom, setCreatingRoom] = useState(false)
 
+    // Lock body scroll on this screen — content fits in one viewport
+    useEffect(() => {
+        document.body.style.overflow = 'hidden'
+        return () => { document.body.style.overflow = '' }
+    }, [])
+
     // Listen for Play Again (Next Room)
     useEffect(() => {
         const nextRoomRef = ref(db, `rooms/${roomCode}/next_room_code`)
@@ -341,9 +347,9 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     const podiumAvatarStyle = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' } as const
 
     return (
-        <div className="container flex-center" style={{ minHeight: '100vh', flexDirection: 'column', paddingTop: '32px', paddingBottom: '40px', gap: '0' }}>
-            <h1 className="text-gradient" style={{ fontSize: 'clamp(1.8rem, 6vw, 3rem)', marginBottom: '8px' }}>Game Over</h1>
-            <p style={{ color: '#aaa', marginBottom: '40px' }}>What a game! Here are the standings.</p>
+        <div className="container flex-center" style={{ minHeight: '100vh', flexDirection: 'column', paddingTop: '24px', paddingBottom: '24px', gap: '0' }}>
+            <h1 className="text-gradient" style={{ fontSize: 'clamp(1.8rem, 6vw, 3rem)', marginBottom: '4px' }}>Game Over</h1>
+            <p style={{ color: '#aaa', marginBottom: 'clamp(16px, 3vh, 32px)' }}>What a game! Here are the standings.</p>
 
             {/* Podium / Draw */}
             {isDraw && drawPlayers.length > 1 ? (
@@ -365,7 +371,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     </div>
                 </div>
             ) : (
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '48px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: 'clamp(20px, 4vh, 48px)' }}>
                     {winners[1] && (
                         <div className="glass-panel animate-in" style={{ padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(220px, 40vw, 340px)', justifyContent: 'flex-end', animationDelay: '200ms', minWidth: '130px' }}>
                             <div
