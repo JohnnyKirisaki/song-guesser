@@ -62,10 +62,12 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     const [nextRoomCode, setNextRoomCode] = useState<string | null>(null)
     const [creatingRoom, setCreatingRoom] = useState(false)
 
-    // Lock body scroll on this screen — content fits in one viewport
+    // Lock body scroll on desktop only — on mobile the recap can be taller than the screen
     useEffect(() => {
-        document.body.style.overflow = 'hidden'
-        return () => { document.body.style.overflow = '' }
+        if (window.innerWidth > 768) {
+            document.body.style.overflow = 'hidden'
+            return () => { document.body.style.overflow = '' }
+        }
     }, [])
 
     // Listen for Play Again (Next Room)
