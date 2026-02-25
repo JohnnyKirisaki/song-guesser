@@ -290,8 +290,9 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
 
     return (
         <div style={{
-            display: 'flex', gap: '24px', height: 'calc(100vh - 100px)',
-            padding: '24px', maxWidth: '1200px', margin: '0 auto', flexWrap: 'wrap'
+            display: 'flex', gap: '24px', minHeight: 'calc(100vh - 100px)',
+            padding: '24px', maxWidth: '1200px', margin: '0 auto', flexWrap: 'wrap',
+            alignContent: 'flex-start'
         }}>
             {/* LEFT: Player List */}
             <div className="glass-panel" style={{ flex: '1 1 300px', padding: '24px', display: 'flex', flexDirection: 'column' }}>

@@ -792,6 +792,100 @@ select:focus {
     transform: translateY(-2px);
 }
 
+/* =========================================
+   MOBILE BREAKPOINTS (≤ 768px)
+   ========================================= */
+@media (max-width: 768px) {
+    .container {
+        padding: 0 16px;
+    }
+
+    .game-hud {
+        top: 8px;
+        left: 10px;
+        right: 10px;
+    }
+
+    /* Leaderboard gets padding so volume slider doesn't cover last player */
+    .game-leaderboard {
+        padding-bottom: 80px;
+    }
+
+    .hud-row {
+        gap: 8px;
+    }
+
+    .round-pill {
+        padding: 6px 10px;
+        font-size: 0.8rem;
+        gap: 6px;
+    }
+
+    .round-tag {
+        font-size: 0.65rem;
+        padding: 3px 8px;
+    }
+
+    .timer-pill {
+        min-width: 40px;
+        height: 40px;
+        font-size: 1rem;
+    }
+
+    .score-hud {
+        left: 10px;
+        bottom: 10px;
+        font-size: 0.9rem;
+        padding: 6px 12px;
+    }
+
+    .game-shell {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 100px;
+        padding-bottom: 100px;
+    }
+
+    .vinyl-container {
+        width: 200px;
+        height: 200px;
+    }
+
+    .lyrics-panel {
+        padding: 16px;
+        font-size: 0.9rem;
+        line-height: 1.6;
+    }
+
+    .btn-primary,
+    .btn-glass {
+        padding: 12px 20px;
+        font-size: 0.8rem;
+    }
+
+    /* Score HUD: hidden on mobile (score is in player cards already) */
+    .score-hud {
+        display: none;
+    }
+
+    /* Emote Bar: compact vertical strip on right, shifted up above volume slider */
+    .emote-bar-mobile {
+        position: fixed !important;
+        bottom: 70px !important;
+        right: 10px !important;
+        top: auto !important;
+        transform: none !important;
+        flex-direction: column !important;
+        padding: 8px 4px !important;
+        gap: 4px !important;
+    }
+
+    .emote-bar-mobile button img {
+        width: 22px !important;
+        height: 22px !important;
+    }
+}
+
 /* Distinctive glow for current player using white instead of neon */
 .player-card.me {
     background: rgba(255, 255, 255, 0.1);

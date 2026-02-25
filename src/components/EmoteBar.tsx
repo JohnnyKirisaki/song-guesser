@@ -15,9 +15,17 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
     const [emotes, setEmotes] = useState<string[]>([])
     const [reactions, setReactions] = useState<Reaction[]>([])
     const lastAddAtRef = useRef(0)
+    const [isMobile, setIsMobile] = useState(false)
 
     const MAX_REACTIONS = 40
     const MIN_REACTION_INTERVAL_MS = 50
+
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth <= 768)
+        check()
+        window.addEventListener('resize', check)
+        return () => window.removeEventListener('resize', check)
+    }, [])
 
     // Load available emotes from API
     useEffect(() => {
@@ -100,7 +108,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
     return (
         <>
             {/* Buttons Bar */}
-            <div className="glass-panel" style={{
+            <div className={`glass-panel${isMobile ? ' emote-bar-mobile' : ''}`} style={{
                 position: 'fixed', right: '20px', top: '50%', transform: 'translateY(-50%)',
                 padding: '12px 6px', borderRadius: '40px', display: 'flex', flexDirection: 'column', gap: '6px', zIndex: 100
             }}>

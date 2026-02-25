@@ -2,7 +2,7 @@
 
 import { useUser } from '@/context/UserContext'
 import { Trophy, Plus, LogIn, Edit2, X, ChevronLeft, Users } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { db } from '@/lib/firebase' // Firebase DB
 import { ref, set, get, child } from 'firebase/database'
@@ -21,7 +21,15 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
     const [joinCode, setJoinCode] = useState('')
     const [loading, setLoading] = useState(false)
     const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+    const [isMobile, setIsMobile] = useState(false)
     const router = useRouter()
+
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth <= 768)
+        check()
+        window.addEventListener('resize', check)
+        return () => window.removeEventListener('resize', check)
+    }, [])
 
     if (!profile) return null
 
@@ -144,7 +152,7 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
 
             {/* Center Content */}
             <div className="container" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ width: '100%', maxWidth: '1100px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '32px' }}>
+                <div style={{ width: '100%', maxWidth: '1100px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(280px, 1fr))', gap: isMobile ? '16px' : '32px' }}>
 
                     {/* Create Room Card */}
                     <button
@@ -152,12 +160,13 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                         disabled={loading}
                         className="glass-panel"
                         style={{
-                            height: '300px',
+                            height: isMobile ? '140px' : '300px',
                             display: 'flex',
-                            flexDirection: 'column',
+                            flexDirection: isMobile ? 'row' : 'column',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            gap: '24px',
+                            gap: isMobile ? '16px' : '24px',
+                            padding: isMobile ? '0 20px' : '0',
                             transition: 'var(--transition)',
                             position: 'relative',
                             overflow: 'hidden',
@@ -182,15 +191,15 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                         }} />
 
                         <div style={{
-                            width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(46, 242, 160, 0.12)',
+                            width: isMobile ? '52px' : '80px', height: isMobile ? '52px' : '80px', borderRadius: '50%', background: 'rgba(46, 242, 160, 0.12)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'var(--primary)'
+                            color: 'var(--primary)', flexShrink: 0
                         }}>
-                            <Plus size={40} />
+                            <Plus size={isMobile ? 26 : 40} />
                         </div>
-                        <div style={{ textAlign: 'center' }}>
-                            <h2 style={{ fontSize: '1.8rem', marginBottom: '8px' }}>Create Room</h2>
-                            <p style={{ color: 'var(--text-muted)' }}>Host a game and invite friends</p>
+                        <div style={{ textAlign: isMobile ? 'left' : 'center', overflow: 'hidden' }}>
+                            <h2 style={{ fontSize: isMobile ? '1.3rem' : '1.8rem', marginBottom: '4px' }}>Create Room</h2>
+                            <p style={{ color: 'var(--text-muted)', fontSize: isMobile ? '0.85rem' : '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Host a game and invite friends</p>
                         </div>
                     </button>
 
@@ -200,12 +209,13 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                         disabled={loading}
                         className="glass-panel"
                         style={{
-                            height: '300px',
+                            height: isMobile ? '140px' : '300px',
                             display: 'flex',
-                            flexDirection: 'column',
+                            flexDirection: isMobile ? 'row' : 'column',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            gap: '24px',
+                            gap: isMobile ? '16px' : '24px',
+                            padding: isMobile ? '0 20px' : '0',
                             transition: 'var(--transition)'
                         }}
                         onMouseEnter={(e) => {
@@ -218,15 +228,15 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                         }}
                     >
                         <div style={{
-                            width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(60, 184, 255, 0.12)',
+                            width: isMobile ? '52px' : '80px', height: isMobile ? '52px' : '80px', borderRadius: '50%', background: 'rgba(60, 184, 255, 0.12)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'var(--secondary)'
+                            color: 'var(--secondary)', flexShrink: 0
                         }}>
-                            <LogIn size={40} />
+                            <LogIn size={isMobile ? 26 : 40} />
                         </div>
-                        <div style={{ textAlign: 'center' }}>
-                            <h2 style={{ fontSize: '1.8rem', marginBottom: '8px' }}>Join Room</h2>
-                            <p style={{ color: 'var(--text-muted)' }}>Enter a code to join an existing game</p>
+                        <div style={{ textAlign: isMobile ? 'left' : 'center', overflow: 'hidden' }}>
+                            <h2 style={{ fontSize: isMobile ? '1.3rem' : '1.8rem', marginBottom: '4px' }}>Join Room</h2>
+                            <p style={{ color: 'var(--text-muted)', fontSize: isMobile ? '0.85rem' : '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Enter a code to join an existing game</p>
                         </div>
                     </button>
 
@@ -242,7 +252,7 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                     backdropFilter: 'blur(8px)', zIndex: 100,
                     display: 'flex', alignItems: 'center', justifyContent: 'center'
                 }}>
-                    <div className="glass-panel" style={{ padding: '32px', width: '100%', maxWidth: '400px', position: 'relative' }}>
+                    <div className="glass-panel" style={{ padding: '24px', width: '100%', maxWidth: '400px', position: 'relative', margin: '0 16px' }}>
                         <button
                             onClick={() => setShowJoinModal(false)}
                             style={{ position: 'absolute', top: '16px', right: '16px', color: 'var(--text-muted)' }}
@@ -274,64 +284,107 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
 
 
             {/* Friend List Sidebar */}
-            <div
-                style={{
-                    position: 'fixed',
-                    right: 0,
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    zIndex: 50,
-                    display: 'flex',
-                    alignItems: 'center'
-                }}
-                onMouseEnter={() => setIsSidebarOpen(true)}
-                onMouseLeave={() => setIsSidebarOpen(false)}
-            >
-                {/* Trigger Tab */}
+            {isMobile ? (
+                // Mobile: tap-toggle overlay
+                <>
+                    <button
+                        onClick={() => setIsSidebarOpen(v => !v)}
+                        className="glass-panel"
+                        style={{
+                            position: 'fixed', bottom: '20px', left: '20px',
+                            zIndex: 60, padding: '12px 16px',
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            borderRadius: '999px', background: 'rgba(0,0,0,0.7)',
+                            backdropFilter: 'blur(12px)'
+                        }}
+                    >
+                        <Users size={18} color="var(--primary)" />
+                        <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Friends</span>
+                    </button>
+                    {isSidebarOpen && (
+                        <div style={{
+                            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+                            backdropFilter: 'blur(8px)', zIndex: 55,
+                            display: 'flex', alignItems: 'flex-end', justifyContent: 'center'
+                        }} onClick={() => setIsSidebarOpen(false)}>
+                            <div
+                                className="glass-panel"
+                                style={{
+                                    width: '100%', maxWidth: '480px', height: '70vh',
+                                    borderBottomLeftRadius: 0, borderBottomRightRadius: 0,
+                                    padding: '16px', overflowY: 'auto'
+                                }}
+                                onClick={e => e.stopPropagation()}
+                            >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                    <h3 style={{ fontWeight: 700 }}>Friends</h3>
+                                    <button onClick={() => setIsSidebarOpen(false)}><X size={20} /></button>
+                                </div>
+                                <FriendList currentUserId={profile.id} minimal={true} />
+                            </div>
+                        </div>
+                    )}
+                </>
+            ) : (
+                // Desktop: hover-based slide-in
                 <div
-                    className="glass-panel"
                     style={{
-                        padding: '12px 4px',
-                        borderTopRightRadius: '12px',
-                        borderBottomRightRadius: '12px',
-                        borderLeft: 'none',
-                        cursor: 'pointer',
+                        position: 'fixed',
+                        right: 0,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        zIndex: 50,
                         display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: '8px',
-                        transform: isSidebarOpen ? 'translateX(0)' : 'translateX(0)',
-                        transition: 'transform 0.3s ease',
-                        background: 'rgba(0, 0, 0, 0.6)',
-                        backdropFilter: 'blur(12px)'
+                        alignItems: 'center'
                     }}
+                    onMouseEnter={() => setIsSidebarOpen(true)}
+                    onMouseLeave={() => setIsSidebarOpen(false)}
                 >
-                    <ChevronLeft size={20} style={{ transform: isSidebarOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.3s' }} />
-                    <Users size={16} color="var(--primary)" />
-                </div>
+                    {/* Trigger Tab */}
+                    <div
+                        className="glass-panel"
+                        style={{
+                            padding: '12px 4px',
+                            borderTopRightRadius: '12px',
+                            borderBottomRightRadius: '12px',
+                            borderLeft: 'none',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '8px',
+                            transition: 'transform 0.3s ease',
+                            background: 'rgba(0, 0, 0, 0.6)',
+                            backdropFilter: 'blur(12px)'
+                        }}
+                    >
+                        <ChevronLeft size={20} style={{ transform: isSidebarOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.3s' }} />
+                        <Users size={16} color="var(--primary)" />
+                    </div>
 
-                {/* Content Panel */}
-                <div
-                    className="glass-panel"
-                    style={{
-                        width: isSidebarOpen ? '320px' : '0px',
-                        height: '500px',
-                        overflow: 'hidden',
-                        transition: 'all 0.3s ease',
-                        borderTopLeftRadius: '16px',
-                        borderBottomLeftRadius: '16px',
-                        borderTopRightRadius: '0',
-                        borderBottomRightRadius: '0',
-                        borderRight: 'none',
-                        borderWidth: isSidebarOpen ? '1px' : '0px',
-                        opacity: isSidebarOpen ? 1 : 0
-                    }}
-                >
-                    <div style={{ width: '320px', height: '100%', padding: '16px' }}>
-                        <FriendList currentUserId={profile.id} minimal={true} />
+                    {/* Content Panel */}
+                    <div
+                        className="glass-panel"
+                        style={{
+                            width: isSidebarOpen ? '320px' : '0px',
+                            height: '500px',
+                            overflow: 'hidden',
+                            transition: 'all 0.3s ease',
+                            borderTopLeftRadius: '16px',
+                            borderBottomLeftRadius: '16px',
+                            borderTopRightRadius: '0',
+                            borderBottomRightRadius: '0',
+                            borderRight: 'none',
+                            borderWidth: isSidebarOpen ? '1px' : '0px',
+                            opacity: isSidebarOpen ? 1 : 0
+                        }}
+                    >
+                        <div style={{ width: '320px', height: '100%', padding: '16px' }}>
+                            <FriendList currentUserId={profile.id} minimal={true} />
+                        </div>
                     </div>
                 </div>
-            </div>
+            )}
 
             {showEditProfile && <ProfileEditor onClose={() => setShowEditProfile(false)} />}
         </div>
