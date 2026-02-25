@@ -10,7 +10,7 @@ export default function Home() {
 
   if (isLoading) {
     return (
-      <main className="flex-center" style={{ height: '100vh' }}>
+      <main className="flex-center" style={{ height: '100dvh' }}>
         <Loader2 className="animate-spin" size={48} color="var(--primary)" />
         <style jsx global>{`
           @keyframes spin {
@@ -26,7 +26,7 @@ export default function Home() {
   }
 
   return (
-    <main style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <main style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
       {!profile ? (
         <div className="flex-center" style={{ flex: 1 }}>
           <Onboarding />

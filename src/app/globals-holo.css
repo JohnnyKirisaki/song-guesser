@@ -55,7 +55,7 @@ body {
     color: var(--text-main);
     font-family: var(--font-main);
     overflow-x: hidden;
-    min-height: 100vh;
+    min-height: 100dvh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     position: relative;
@@ -136,13 +136,30 @@ body::after {
     }
 }
 
+@keyframes floatUp {
+    0% {
+        transform: translateY(0) scale(0.5);
+        opacity: 0;
+    }
+
+    10% {
+        transform: translateY(-20px) scale(1.2);
+        opacity: 1;
+    }
+
+    100% {
+        transform: translateY(-200px) scale(1);
+        opacity: 0;
+    }
+}
+
 /* Optional noise overlay for that premium textured gradient look */
 .noise-overlay {
     position: fixed;
     top: 0;
     left: 0;
     width: 100vw;
-    height: 100vh;
+    height: 100dvh;
     opacity: 0.05;
     mix-blend-mode: overlay;
     z-index: -1;
@@ -906,4 +923,46 @@ select:focus {
 .player-card.wrong {
     background: rgba(255, 100, 100, 0.1);
     border-color: rgba(255, 100, 100, 0.3);
+}
+
+/* =============================================================
+   iOS-ONLY OVERRIDES (class injected by IOSDetector.tsx)
+   These keep Android/desktop behaviour completely unchanged.
+   ============================================================= */
+
+/* 1. Reduce backdrop-filter cost — WebKit GPU thrashing with blur(24px) */
+.ios .glass-panel {
+    backdrop-filter: blur(8px) saturate(110%);
+    -webkit-backdrop-filter: blur(8px) saturate(110%);
+}
+
+.ios .btn-glass {
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+}
+
+/* 2. Kill background animation on iOS — extremely expensive on WebKit */
+.ios body {
+    animation: none !important;
+    background-attachment: scroll !important;
+}
+
+/* 3. Fix 100dvh for loading/game screens */
+.ios .game-shell {
+    min-height: 100dvh;
+}
+
+/* 4. Push fixed bottom elements above the iOS home indicator bar.
+      env(safe-area-inset-bottom) is 0 on devices without the bar. */
+.ios .score-hud {
+    bottom: calc(24px + env(safe-area-inset-bottom));
+}
+
+.ios .volume-slider-fixed {
+    bottom: calc(24px + env(safe-area-inset-bottom));
+}
+
+/* 5. Prevent text size adjustment on orientation change */
+.ios * {
+    -webkit-text-size-adjust: 100%;
 }

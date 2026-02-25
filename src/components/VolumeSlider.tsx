@@ -8,7 +8,7 @@ export default function VolumeSlider() {
     const { volume, setVolume } = useVolume()
 
     return (
-        <div className="glass-panel" style={{
+        <div className="glass-panel volume-slider-fixed" style={{
             position: 'fixed',
             bottom: '24px',
             right: '24px',

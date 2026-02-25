@@ -18,6 +18,7 @@ import Onboarding from '@/components/Onboarding'
 import GameRecap from '@/components/GameRecap'
 import { initiateSuddenDeath, fetchMoreSuddenDeathSongs, endSuddenDeath } from '@/lib/sudden-death'
 import UserPopover from '@/components/UserPopover'
+import { useIOSAudioUnlock } from '@/hooks/useIOSAudioUnlock'
 
 type Player = {
     id: string
@@ -152,6 +153,9 @@ export default function GamePage() {
 
     // Refs
     const audioRef = useRef<HTMLAudioElement | null>(null)
+
+    // iOS WebKit blocks audio until a user gesture fires. Unlock on first touch.
+    useIOSAudioUnlock(audioRef)
     const audioRetryRef = useRef<Record<string, number>>({})
     const lastRevealSoundRoundRef = useRef<number | null>(null)
     const playersRef = useRef<Player[]>([]) // Authoritative ref to avoid stale closures
@@ -1340,7 +1344,7 @@ export default function GamePage() {
         return <GameRecap roomCode={code} players={players} />
     }
 
-    if (!gameState || !currentSong) return <div className="flex-center" style={{ height: '100vh' }}>Loading Game...</div>
+    if (!gameState || !currentSong) return <div className="flex-center" style={{ height: '100dvh' }}>Loading Game...</div>
 
     // B. VS Screen (Sudden Death Intro)
     if (gameState.phase === 'vs_screen') {
@@ -1349,7 +1353,7 @@ export default function GamePage() {
         )
 
         return (
-            <div className="flex-center" style={{ flexDirection: 'column', height: '100vh', gap: '40px' }}>
+            <div className="flex-center" style={{ flexDirection: 'column', height: '100dvh', gap: '40px' }}>
                 <h1 className="text-gradient" style={{ fontSize: '5rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '4px' }}>
                     ⚔️ SUDDEN DEATH ⚔️
                 </h1>
@@ -1422,7 +1426,7 @@ export default function GamePage() {
         : players
 
     return (
-        <div className="game-shell" style={{ width: '100%', margin: '0 auto', paddingBottom: '28px', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="game-shell" style={{ width: '100%', margin: '0 auto', paddingBottom: '28px', minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
             <style jsx>{`
                 .vinyl-container {
                     width: 250px;

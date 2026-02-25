@@ -149,13 +149,6 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
                 ))}
             </div>
 
-            <style jsx global>{`
-                @keyframes floatUp {
-                    0% { transform: translateY(0) scale(0.5); opacity: 0; }
-                    10% { opacity: 1; transform: translateY(-20px) scale(1.2); }
-                    100% { transform: translateY(-200px) scale(1); opacity: 0; }
-                }
-            `}</style>
         </>
     )
 }

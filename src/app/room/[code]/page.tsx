@@ -70,11 +70,11 @@ export default function RoomLobby() {
     }, [code, profile, router])
 
     if (!profile) return (
-        <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ height: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Onboarding />
         </div>
     )
-    if (loading || !roomData) return <div className="flex-center" style={{ height: '100vh', color: 'white' }}>Connecting to Lobby...</div>
+    if (loading || !roomData) return <div className="flex-center" style={{ height: '100dvh', color: 'white' }}>Connecting to Lobby...</div>
 
     return (
         <Lobby
