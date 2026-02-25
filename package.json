@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "clear-cache": "npx ts-node --esm scripts/clear-song-cache.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.94.0",

@@ -156,21 +156,50 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
 
     // --- 0. ISRC Match (Golden Ticket) ---
     if (track.isrc) {
-        // User suggested: /track/isrc:<ISRC>
         const isrcUrl = `https://api.deezer.com/track/isrc:${track.isrc}`
         queriesUsed.push(`Direct ISRC: ${track.isrc}`)
 
         try {
-            // Note: This endpoint returns the object directly, or an error field
             const data = await fetchWithRetry(isrcUrl)
 
             if (data && data.id && !data.error) {
                 const match = data
-                // Double check artist just in case (though ISRC should be unique, sometimes mapping is weird)
-                // TRUST THE ISRC. It is a unique identifier.
-                // If Deezer returns a track for this ISRC, it is the correct recording.
-                // Ignoring metadata mismatches (e.g. "Arcane" vs "Ashnikko") because the audio is the same.
-                console.log(`[Resolver] ISRC HIT: ${track.isrc} -> ${match.title}`)
+                console.log(`[Resolver] ISRC HIT: ${track.isrc} -> ${match.title} [Album: ${match.album?.title}]`)
+
+                // --- Album Name Validation ---
+                // If Spotify gave us an album name, check if the Deezer ISRC result's album matches.
+                // ISRC can point to a compilation/remix ("Back to School Mix") instead of the original.
+                // When they don't match, we keep the ISRC preview URL (same audio) but search for
+                // a Deezer track with the correct album art.
+                let coverUrl = match.album?.cover_xl || match.album?.cover_big
+                const deezerAlbum = match.album?.title ? normalizeForCompare(match.album.title) : ''
+                const spotifyAlbum = track.album ? normalizeForCompare(track.album) : ''
+
+                if (spotifyAlbum && deezerAlbum && !deezerAlbum.includes(spotifyAlbum) && !spotifyAlbum.includes(deezerAlbum)) {
+                    console.log(`[Resolver] ISRC album mismatch: Deezer="${match.album?.title}" vs Spotify="${track.album}" — searching for original cover`)
+
+                    try {
+                        // Quick search for the track on the correct album
+                        const q = `artist:"${track.artist}" track:"${track.title}"`
+                        const searchData = await fetchWithRetry(`${DEEZER_API}?q=${encodeURIComponent(q)}&limit=25`)
+                        if (searchData?.data?.length > 0) {
+                            // Prefer a result whose album name matches the Spotify album
+                            const betterMatch = searchData.data.find((c: any) => {
+                                if (!c.album?.title) return false
+                                const cAlbum = normalizeForCompare(c.album.title)
+                                return cAlbum.includes(spotifyAlbum) || spotifyAlbum.includes(cAlbum)
+                            })
+                            if (betterMatch) {
+                                console.log(`[Resolver] Found better cover from album: "${betterMatch.album.title}"`)
+                                coverUrl = betterMatch.album?.cover_xl || betterMatch.album?.cover_big || coverUrl
+                            }
+                        }
+                    } catch (e: any) {
+                        console.warn(`[Resolver] Cover fallback search failed:`, e.message)
+                        // Keep original cover from ISRC result
+                    }
+                }
+
                 const result: ResolvedTrack = {
                     input: track,
                     resolved: true,
@@ -179,7 +208,7 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                         title: match.title,
                         artist: match.artist.name,
                         preview_url: match.preview,
-                        cover_url: match.album?.cover_xl || match.album?.cover_big,
+                        cover_url: coverUrl,
                         duration: match.duration,
                         link: match.link
                     },
