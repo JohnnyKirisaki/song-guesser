@@ -172,31 +172,56 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                 // When they don't match, we keep the ISRC preview URL (same audio) but search for
                 // a Deezer track with the correct album art.
                 let coverUrl = match.album?.cover_xl || match.album?.cover_big
-                const deezerAlbum = match.album?.title ? normalizeForCompare(match.album.title) : ''
-                const spotifyAlbum = track.album ? normalizeForCompare(track.album) : ''
 
-                if (spotifyAlbum && deezerAlbum && !deezerAlbum.includes(spotifyAlbum) && !spotifyAlbum.includes(deezerAlbum)) {
-                    console.log(`[Resolver] ISRC album mismatch: Deezer="${match.album?.title}" vs Spotify="${track.album}" — searching for original cover`)
-
+                // --- Tiered Cover Art Selection ---
+                // ISRC guarantees correct audio. But the ISRC can point to a compilation,
+                // a standard edition when we want Deluxe, or vice versa.
+                // We always try to find the best cover using the Spotify album name.
+                //
+                // Tier 1: Exact version match  (Deluxe → Deluxe cover)
+                // Tier 2: Base album match      (Deluxe → Standard cover as fallback)
+                // Tier 3: Whatever ISRC returned (unchanged)
+                if (track.album) {
                     try {
-                        // Quick search for the track on the correct album
                         const q = `artist:"${track.artist}" track:"${track.title}"`
                         const searchData = await fetchWithRetry(`${DEEZER_API}?q=${encodeURIComponent(q)}&limit=25`)
+
                         if (searchData?.data?.length > 0) {
-                            // Prefer a result whose album name matches the Spotify album
-                            const betterMatch = searchData.data.find((c: any) => {
+                            const spotifyAlbum = normalizeForCompare(track.album)
+
+                            // Strip edition qualifiers to get the base album name
+                            // "short n sweet deluxe edition" → "short n sweet"
+                            const baseAlbum = spotifyAlbum
+                                .replace(/\s*([\-–(]?\s*(deluxe|diamond|platinum|gold|special|expanded|anniversary|super|edition|version|remaster(ed)?|mix|tour)\b.*)/gi, '')
+                                .trim()
+
+                            // Tier 1: Exact/specific version match
+                            let bestCover = searchData.data.find((c: any) => {
                                 if (!c.album?.title) return false
                                 const cAlbum = normalizeForCompare(c.album.title)
-                                return cAlbum.includes(spotifyAlbum) || spotifyAlbum.includes(cAlbum)
+                                return cAlbum === spotifyAlbum || cAlbum.includes(spotifyAlbum) || spotifyAlbum.includes(cAlbum)
                             })
-                            if (betterMatch) {
-                                console.log(`[Resolver] Found better cover from album: "${betterMatch.album.title}"`)
-                                coverUrl = betterMatch.album?.cover_xl || betterMatch.album?.cover_big || coverUrl
+
+                            // Tier 2: Base album name match (fallback for Deluxe → Standard)
+                            if (!bestCover && baseAlbum && baseAlbum !== spotifyAlbum) {
+                                bestCover = searchData.data.find((c: any) => {
+                                    if (!c.album?.title) return false
+                                    const cAlbum = normalizeForCompare(c.album.title)
+                                    return cAlbum.includes(baseAlbum) || baseAlbum.includes(cAlbum)
+                                })
+                            }
+
+                            if (bestCover) {
+                                const upgraded = bestCover.album?.cover_xl || bestCover.album?.cover_big
+                                if (upgraded) {
+                                    console.log(`[Resolver] Cover: "${match.album?.title}" → "${bestCover.album.title}"`)
+                                    coverUrl = upgraded
+                                }
                             }
                         }
                     } catch (e: any) {
-                        console.warn(`[Resolver] Cover fallback search failed:`, e.message)
-                        // Keep original cover from ISRC result
+                        console.warn(`[Resolver] Cover search failed:`, e.message)
+                        // Tier 3: keep ISRC cover
                     }
                 }
 
