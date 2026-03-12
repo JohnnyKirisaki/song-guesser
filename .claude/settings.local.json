@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"phase.*playing\\\\|playing phase\\\\|already.*playing\\\\|game.*started\" /c/Users/Johnny/Documents/BeatBattle/src/app/room/[code]/page.tsx)"
+    ]
+  }
+}

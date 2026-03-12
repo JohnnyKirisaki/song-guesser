@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase'
-import { ref, get, update, serverTimestamp } from 'firebase/database'
+import { ref, get, update } from 'firebase/database'
 import { shuffleArray } from './game-utils'
 import { fetchLyrics } from '@/lib/lyrics'
 
@@ -218,7 +218,7 @@ export async function prepareGamePayload(
     const initialGameState: GameState = {
         playlist: finalPlaylist,
         current_round_index: 0,
-        round_start_time: serverTimestamp() as any, // Use server time for sync
+        round_start_time: null, // Host sets this once audio is ready (same as rounds 1+)
         phase: 'playing', // Auto-start instead of waiting in 'starting'
         answers_revealed: false,
         is_sudden_death: false,

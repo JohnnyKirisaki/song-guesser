@@ -126,20 +126,24 @@ export async function POST(request: Request) {
         }
 
         const findReplacementWithLyrics = async (): Promise<{ song: SongItem, lyrics: string } | null> => {
-            const pool = allSongs.filter(s => !usedSongIds.has(s.id)).sort(() => 0.5 - Math.random())
-            let attempts = 0
-            for (const candidate of pool) {
-                if (attempts >= 3) {
-                    console.log('[Reveal] Max replacement attempts reached (3). Giving up.')
-                    break
-                }
-                attempts++
+            const pool = allSongs.filter(s => !usedSongIds.has(s.id)).sort(() => 0.5 - Math.random()).slice(0, 3)
+            if (pool.length === 0) return null
+
+            // Fetch lyrics for all candidates simultaneously — first success wins
+            const attempts = pool.map(async (candidate) => {
                 const l = await fetchLyrics(candidate.artist_name, candidate.track_name)
-                if (!l) continue
-                usedSongIds.add(candidate.id)
+                if (!l) throw new Error('no lyrics')
                 return { song: candidate, lyrics: l }
+            })
+
+            try {
+                const result = await Promise.any(attempts)
+                usedSongIds.add(result.song.id)
+                return result
+            } catch {
+                console.log('[Reveal] No replacement found with lyrics in 3 candidates.')
+                return null
             }
-            return null
         }
 
         const roundStartRaw = gameState.round_start_time
@@ -267,10 +271,10 @@ export async function POST(request: Request) {
 
                         if (shouldPrefetch) {
                             const indices = Array.from({ length: chunkSize }, (_, i) => roundIndex + 1 + i)
-                            for (const idx of indices) {
+                            await Promise.all(indices.map(async (idx) => {
                                 const secretRef = ref(db, `room_secrets/${roomCode}/${idx}`)
                                 const secretSnap = await get(secretRef)
-                                if (!secretSnap.exists()) continue
+                                if (!secretSnap.exists()) return
                                 const nextSong = secretSnap.val() as SongItem
 
                                 const cacheRef = ref(db, `rooms/${roomCode}/lyrics_cache/${nextSong.id}`)
@@ -291,7 +295,7 @@ export async function POST(request: Request) {
                                 } else {
                                     await ensurePreviewForSong(nextSong, idx, true)
                                 }
-                            }
+                            }))
                         }
                     }
                 } else {

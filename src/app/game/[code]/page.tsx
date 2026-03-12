@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, type MouseEvent, type SyntheticEvent } from 'react'
+import { useEffect, useState, useRef, useMemo, type MouseEvent, type SyntheticEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, get, serverTimestamp, onDisconnect } from 'firebase/database'
@@ -8,7 +8,7 @@ import { useUser } from '@/context/UserContext'
 import { GameState, SongItem } from '@/lib/game-logic'
 import { useVolume } from '@/context/VolumeContext'
 
-import { Music, Check, Mic2, Disc, FileText, Zap } from 'lucide-react'
+import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward } from 'lucide-react'
 import ProgressBar from '@/components/ProgressBar'
 import { soundManager } from '@/lib/sounds'
 import { processNextRound } from '@/lib/game-round-manager'
@@ -66,6 +66,11 @@ export default function GamePage() {
     const [retryTrigger, setRetryTrigger] = useState(0) // Retry counter for failed audio
     const [isBulletRound, setIsBulletRound] = useState(false)
     const [playingSongId, setPlayingSongId] = useState<string | null>(null) // Track which song is ACTUALLY playing
+    const [scoreDeltas, setScoreDeltas] = useState<Record<string, number>>({})
+    const [rankChanges, setRankChanges] = useState<Record<string, number>>({})
+    const [roomSongs, setRoomSongs] = useState<{ track_name: string, artist_name: string }[]>([])
+    const [titleFocused, setTitleFocused] = useState(false)
+    const [artistFocused, setArtistFocused] = useState(false)
 
     const { volume } = useVolume()
     const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
@@ -88,6 +93,24 @@ export default function GamePage() {
         'rgbString',
         { crossOrigin: 'anonymous', quality: 10 }
     )
+
+    const titleGradient = (() => {
+        if (!dominantColor) return 'linear-gradient(135deg, #ffffff 0%, rgba(29, 185, 84, 0.8) 100%)'
+        const match = dominantColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+        if (!match) return 'linear-gradient(135deg, #ffffff 0%, rgba(29, 185, 84, 0.8) 100%)'
+        const r = parseInt(match[1]), g = parseInt(match[2]), b = parseInt(match[3])
+        // Perceived brightness (0–1)
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000 / 255
+        let r2, g2, b2
+        if (brightness > 0.5) {
+            // Bright primary — subtle darkening
+            r2 = Math.round(r * 0.65); g2 = Math.round(g * 0.65); b2 = Math.round(b * 0.65)
+        } else {
+            // Dark primary — subtle lightening
+            r2 = Math.round(r + (255 - r) * 0.28); g2 = Math.round(g + (255 - g) * 0.28); b2 = Math.round(b + (255 - b) * 0.28)
+        }
+        return `linear-gradient(135deg, rgb(${r},${g},${b}) 0%, rgb(${r2},${g2},${b2}) 100%)`
+    })()
 
     // Only apply the dynamic color during the REVEAL phase. Otherwise, fallback to Spotify Green/Theme default.
     const dynamicFlare1Temp = isRealRevealTemp || (gameState?.phase === 'reveal')
@@ -175,6 +198,34 @@ export default function GamePage() {
     const audioPrefetchRef = useRef<Record<string, number>>({})
     const audioPrefetchInFlightRef = useRef<Record<string, boolean>>({})
     const audioPrefetchPromisesRef = useRef<Record<string, Promise<string | null> | null>>({})
+    const prevScoresRef = useRef<Record<string, number>>({})
+    const prevRanksRef = useRef<Record<string, number>>({})
+
+    // Load room songs once for autocomplete
+    useEffect(() => {
+        if (!code) return
+        get(ref(db, `rooms/${code}/songs`)).then(snap => {
+            if (!snap.exists()) return
+            const songs = Object.values(snap.val()) as any[]
+            setRoomSongs(songs.map(s => ({ track_name: s.track_name || '', artist_name: s.artist_name || '' })))
+        }).catch(() => { })
+    }, [code])
+
+    const titleSuggestions = useMemo(() => {
+        if (!guess.title || guess.title.length < 2) return []
+        const q = guess.title.toLowerCase()
+        return [...new Set(
+            roomSongs.filter(s => s.track_name.toLowerCase().includes(q)).map(s => s.track_name)
+        )].slice(0, 5)
+    }, [guess.title, roomSongs])
+
+    const artistSuggestions = useMemo(() => {
+        if (!guess.artist || guess.artist.length < 2) return []
+        const q = guess.artist.toLowerCase()
+        return [...new Set(
+            roomSongs.filter(s => s.artist_name.toLowerCase().includes(q)).map(s => s.artist_name)
+        )].slice(0, 5)
+    }, [guess.artist, roomSongs])
 
     const resolvePreviewForSong = async (song: SongItem): Promise<string | null> => {
         if (!song) return null
@@ -183,54 +234,45 @@ export default function GamePage() {
 
         const trackId = song.spotify_uri
         const isDeezerId = typeof trackId === 'string' && /^\d+$/.test(trackId)
+        const isMasked = song.artist_name === '???' || song.track_name === '???'
 
-        try {
-            // 1. Try refreshing by ID (Fastest)
-            if (isDeezerId) {
-                console.log(`[Audio] Refreshing via ID: ${trackId}`)
+        const tryRefreshById = async (): Promise<string | null> => {
+            if (!isDeezerId) return null
+            try {
                 const res = await fetch(`/api/refresh-track?id=${trackId}`)
                 const data = await res.json()
-                if (data.preview_url) {
-                    const newUrl = data.preview_url.replace(/^http:\/\//i, 'https://')
-                    audioPreviewOverrideRef.current[song.id] = newUrl
-                    return newUrl
-                }
+                if (data.preview_url) return data.preview_url.replace(/^http:\/\//i, 'https://')
+            } catch (err) {
+                console.error('[Audio] ID refresh failed:', err)
             }
-        } catch (err) {
-            console.error('[Audio] ID Refresh failed, trying fallback:', err)
+            return null
         }
 
-        // 2. Fallback: Resolve by Artist + Title (Slower but more robust)
-        try {
-            // Guard: If it's a masked song (during sudden death or before reveal), do NOT fallback search "???"
-            if (song.artist_name === '???' || song.track_name === '???') {
-                console.warn('[Audio] Skipping fallback for masked song')
-                return null
-            }
-
-            if (song.artist_name && song.track_name) {
-                console.log('[Audio] Attempting fallback resolution for:', song.track_name)
+        const tryResolveByMeta = async (): Promise<string | null> => {
+            if (isMasked || !song.artist_name || !song.track_name) return null
+            try {
                 const res = await fetch('/api/resolve-tracks', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        tracks: [{ artist: song.artist_name, title: song.track_name }]
-                    })
+                    body: JSON.stringify({ tracks: [{ artist: song.artist_name, title: song.track_name }] })
                 })
                 const data = await res.json()
                 const resolved = data?.tracks?.find((t: any) => t?.resolved && t?.deezer?.preview_url)
-                if (resolved?.deezer?.preview_url) {
-                    const newUrl = resolved.deezer.preview_url.replace(/^http:\/\//i, 'https://')
-                    audioPreviewOverrideRef.current[song.id] = newUrl
-                    console.log('[Audio] Fallback resolution success')
-                    return newUrl
-                }
+                if (resolved?.deezer?.preview_url) return resolved.deezer.preview_url.replace(/^http:\/\//i, 'https://')
+            } catch (err) {
+                console.error('[Audio] Meta resolution failed:', err)
             }
-        } catch (err) {
-            console.error('[Audio] Preview resolve completely failed:', err)
+            return null
         }
 
-        return null
+        // Fire both strategies simultaneously — use whichever returns a URL first
+        const [fromId, fromMeta] = await Promise.all([tryRefreshById(), tryResolveByMeta()])
+        const newUrl = fromId || fromMeta
+
+        if (newUrl && song.id) {
+            audioPreviewOverrideRef.current[song.id] = newUrl
+        }
+        return newUrl || null
     }
 
     const isPreviewExpired = (url: string, nowSeconds: number, leewaySeconds = 0) => {
@@ -537,8 +579,40 @@ export default function GamePage() {
     // Reconnect protection: keep player slot during game
     useEffect(() => {
         if (!profile) return
+
+        // Save active game to localStorage so MainMenu can offer a rejoin prompt
+        localStorage.setItem('bb_active_game', JSON.stringify({ code, joinedAt: Date.now() }))
+
         const playerRef = ref(db, `rooms/${code}/players/${profile.id}`)
         onDisconnect(playerRef).cancel()
+
+        // Re-add player if their slot was dropped by a previous onDisconnect
+        get(playerRef).then(async (snap) => {
+            if (snap.exists()) return
+            // Reconstruct score from round_history
+            let restoredScore = 0
+            try {
+                const historySnap = await get(ref(db, `rooms/${code}/round_history`))
+                if (historySnap.exists()) {
+                    const history = Object.values(historySnap.val()) as any[]
+                    restoredScore = history.reduce((sum, round) => {
+                        const guess = (round.guesses || []).find((g: any) => g.user_id === profile.id)
+                        return sum + (guess?.points ?? 0)
+                    }, 0)
+                }
+            } catch { /* non-fatal */ }
+
+            update(playerRef, {
+                id: profile.id,
+                username: profile.username,
+                avatar_url: profile.avatar_url,
+                score: restoredScore,
+                is_host: false,
+                is_ready: true,
+                has_submitted: false,
+                joined_at: Date.now()
+            })
+        })
     }, [code, profile])
 
     // --------------------------------------------------------------------------------
@@ -962,6 +1036,41 @@ export default function GamePage() {
         lastRevealSoundRoundRef.current = gameState.current_round_index
     }, [gameState?.phase, gameState?.current_round_index, players, profile.id])
 
+    // Snapshot scores/ranks at start of each round so we can show deltas on reveal
+    useEffect(() => {
+        if (gameState?.phase !== 'playing') return
+        const scores: Record<string, number> = {}
+        const ranks: Record<string, number> = {}
+        const sorted = [...players].sort((a, b) => b.score - a.score)
+        players.forEach(p => { scores[p.id] = p.score })
+        sorted.forEach((p, i) => { ranks[p.id] = i })
+        prevScoresRef.current = scores
+        prevRanksRef.current = ranks
+        setScoreDeltas({})
+        setRankChanges({})
+    }, [gameState?.phase]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Compute score deltas and rank changes when reveal data arrives
+    useEffect(() => {
+        if (gameState?.phase !== 'reveal') return
+        const hasData = players.some(p => p.last_round_correct_title !== undefined)
+        if (!hasData) return
+        const deltas: Record<string, number> = {}
+        const changes: Record<string, number> = {}
+        const sorted = [...players].sort((a, b) => b.score - a.score)
+        players.forEach(p => {
+            const prev = prevScoresRef.current[p.id] ?? p.score
+            const d = p.score - prev
+            if (d > 0) deltas[p.id] = d
+        })
+        sorted.forEach((p, i) => {
+            const prevRank = prevRanksRef.current[p.id] ?? i
+            changes[p.id] = prevRank - i // positive = moved up
+        })
+        setScoreDeltas(deltas)
+        setRankChanges(changes)
+    }, [players, gameState?.phase])
+
     // Timer Countdown (Synced with Server Time + Skew)
     useEffect(() => {
         const totalTime = roomSettings?.time || 15
@@ -1002,9 +1111,13 @@ export default function GamePage() {
 
             updateTimer() // run once immediately
 
+            // Guard: timer must see a positive value before it can trigger force-reveal.
+            // Prevents round-0 bug where elapsed time is calculated before audio loads.
+            let everSawPositive = false
             const interval = setInterval(() => {
                 const t = updateTimer()
-                if (t <= 0 && isHost) {
+                if (t > 0.5) everSawPositive = true
+                if (t <= 0 && isHost && everSawPositive) {
                     clearInterval(interval)
                     // Give a 1s Grace Period for clients to auto-submit at t=0
                     setTimeout(() => {
@@ -1341,6 +1454,7 @@ export default function GamePage() {
 
     // A. Finished -> Podium
     if (status === 'finished') {
+        localStorage.removeItem('bb_active_game')
         return <GameRecap roomCode={code} players={players} />
     }
 
@@ -1620,12 +1734,31 @@ export default function GamePage() {
 
             {/* Main Game Area */}
             <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: '10vh', paddingBottom: '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: 'hidden' }}>
+                {/* Host skip button — invisible, hover to reveal */}
+                {isHost && gameState?.phase === 'playing' && (
+                    <button
+                        onClick={() => processReveal()}
+                        title="Skip Round"
+                        className="host-skip-btn"
+                    >
+                        <SkipForward size={16} />
+                    </button>
+                )}
                 <div className="game-core">
                     {/* Album Cover Area (Hidden until Reveal, unless not lyrics mode) */}
-                    {(!isLyricsOnly || isReveal) && (
+                    {(!isLyricsOnly || isReveal) && (() => {
+                        const myResult = players.find(p => p.id === profile?.id)
+                        const hasResult = myResult?.last_round_correct_title !== undefined
+                        const iGotCorrect = hasResult && (myResult?.last_round_correct_title === true || myResult?.last_round_correct_artist === true)
+                        const glowBoxShadow = isReveal && hasResult
+                            ? iGotCorrect
+                                ? '0 0 0 2px rgba(29,185,84,0.5), 0 0 35px rgba(29,185,84,0.55), 0 0 70px rgba(29,185,84,0.22)'
+                                : '0 0 0 2px rgba(248,113,113,0.5), 0 0 35px rgba(248,113,113,0.55), 0 0 70px rgba(248,113,113,0.22)'
+                            : undefined
+                        return (
                         <div
-                            className={`vinyl-container ${isPlaying ? 'spinning' : ''} ${isReveal ? 'reveal' : ''}`}
-                            style={{ marginBottom: '32px' }}
+                            className={`vinyl-container ${isPlaying ? 'spinning' : ''} ${isReveal ? 'reveal reveal-pop' : ''}`}
+                            style={{ marginBottom: '32px', transition: 'box-shadow 0.5s ease', boxShadow: glowBoxShadow }}
                         >
                             <div className="vinyl-grooves" />
                             <div className={`vinyl-label ${isReveal ? 'reveal' : ''}`}>
@@ -1642,20 +1775,21 @@ export default function GamePage() {
                                 )}
                             </div>
                         </div>
-                    )}
+                        )
+                    })()}
 
                     {/* Question / Inputs */}
                     {isReveal ? (
-                        <div style={{ textAlign: 'center', animation: 'fadeIn 0.5s', width: '100%' }}>
+                        <div style={{ textAlign: 'center', width: '100%' }}>
                             {effectiveSong.picked_by_user_id === profile.id && (
                                 <div style={{ marginBottom: '12px', fontWeight: 700, color: '#FFD700' }}>
                                     This was your song
                                 </div>
                             )}
-                            <h2 className="text-gradient" style={{ fontSize: '2rem', fontWeight: 900, marginBottom: '8px' }}>
+                            <h2 className="text-gradient reveal-slide" style={{ fontSize: '2rem', fontWeight: 900, marginBottom: '8px', animationDelay: '0.1s', '--title-gradient': titleGradient } as React.CSSProperties}>
                                 {effectiveSong.track_name}
                             </h2>
-                            <h3 style={{ fontSize: '1.5rem', color: '#ccc' }}>
+                            <h3 className="reveal-slide" style={{ fontSize: '1.5rem', color: '#ccc', animationDelay: '0.2s' }}>
                                 {effectiveSong.artist_name}
                             </h3>
                             {/* We use 'songPicker' derived from currentSong mostly. Need to check if effectiveSong differs. */}
@@ -1674,10 +1808,10 @@ export default function GamePage() {
                             })()}
 
 
-                            <div style={{ marginTop: '18px', width: '100%', maxWidth: '520px', marginLeft: 'auto', marginRight: 'auto' }}>
+                            <div className="reveal-slide" style={{ marginTop: '18px', width: '100%', maxWidth: '520px', marginLeft: 'auto', marginRight: 'auto', animationDelay: '0.3s' }}>
                                 <div style={{ fontWeight: 700, marginBottom: '10px', opacity: 0.9 }}>Round Results</div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {displayPlayers.map(p => {
+                                    {displayPlayers.map((p, i) => {
                                         // If viewing previous round (waiting for audio), we rely on 'last_' stats which ARE from previous round.
                                         // But if we advanced round index, 'last_' stats might have been reset?
                                         // In 'useEffect [gameState.current_round_index]', we reset stats:
@@ -1695,18 +1829,32 @@ export default function GamePage() {
                                         // Actually, if we just transitioned, 'last_' stats in local state MIGHT be cleared.
                                         // Let's check the useEffect again.
 
-                                        return (
+                                        const delta = scoreDeltas[p.id]
+                                        const rankChange = rankChanges[p.id] ?? 0
 
-                                            <div key={p.id} style={{
+                                        return (
+                                            <div key={p.id} className="reveal-slide" style={{
                                                 display: 'flex', alignItems: 'center', gap: '12px',
                                                 padding: '8px 12px', borderRadius: '10px',
                                                 background: correct ? 'rgba(30, 215, 96, 0.08)' : 'rgba(233, 20, 41, 0.08)',
                                                 border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`,
-                                                cursor: 'pointer'
+                                                cursor: 'pointer',
+                                                animationDelay: `${0.35 + i * 0.06}s`,
+                                                position: 'relative',
                                             }}
                                                 onClick={(e) => openUserMenu(p, e)}
                                                 onContextMenu={(e) => openUserMenu(p, e)}
                                             >
+                                                {/* Rank change indicator */}
+                                                {hasData && rankChange !== 0 && (
+                                                    <div style={{
+                                                        fontSize: '0.65rem', fontWeight: 700, minWidth: '20px', textAlign: 'center',
+                                                        color: rankChange > 0 ? '#1ed760' : '#e91429',
+                                                    }}>
+                                                        {rankChange > 0 ? `▲${rankChange}` : `▼${Math.abs(rankChange)}`}
+                                                    </div>
+                                                )}
+                                                {hasData && rankChange === 0 && <div style={{ minWidth: '20px' }} />}
                                                 <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
                                                 <div style={{ flex: 1 }}>
                                                     <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</div>
@@ -1717,8 +1865,14 @@ export default function GamePage() {
                                                         }
                                                     </div>
                                                 </div>
-                                                <div style={{ fontWeight: 800, color: correct ? '#1ed760' : '#e91429' }}>
+                                                <div style={{ fontWeight: 800, color: correct ? '#1ed760' : '#e91429', position: 'relative' }}>
                                                     {hasData ? (correct ? `+${p.last_round_points ?? 0}` : '0') : '-'}
+                                                    {/* Score delta float animation */}
+                                                    {delta && (
+                                                        <span key={`${p.id}-delta-${gameState?.current_round_index}`} className="score-delta">
+                                                            +{delta}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         )
@@ -1749,40 +1903,82 @@ export default function GamePage() {
 
                             <div style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                 {showTitleInput && (
-                                    <input
-                                        ref={titleInputRef}
-                                        type="text" placeholder="Guess the Song Title..."
-                                        className="input-field"
-                                        value={guess.title}
-                                        onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault()
-                                                if (showArtistInput) {
-                                                    artistInputRef.current?.focus()
-                                                } else {
-                                                    submitGuess()
+                                    <div style={{ position: 'relative' }}>
+                                        <input
+                                            ref={titleInputRef}
+                                            type="text" placeholder="Guess the Song Title..."
+                                            className="input-field"
+                                            value={guess.title}
+                                            onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
+                                            onFocus={() => setTitleFocused(true)}
+                                            onBlur={() => setTimeout(() => setTitleFocused(false), 150)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault()
+                                                    if (showArtistInput) {
+                                                        artistInputRef.current?.focus()
+                                                    } else {
+                                                        submitGuess()
+                                                    }
                                                 }
-                                            }
-                                        }}
-                                        disabled={hasSubmitted || !canGuess}
-                                    />
+                                                if (e.key === 'Escape') setTitleFocused(false)
+                                            }}
+                                            disabled={hasSubmitted || !canGuess}
+                                        />
+                                        {titleFocused && titleSuggestions.length > 0 && (
+                                            <div className="autocomplete-dropdown">
+                                                {titleSuggestions.map((s, i) => (
+                                                    <div
+                                                        key={i}
+                                                        className="autocomplete-item"
+                                                        onMouseDown={() => {
+                                                            setGuess(prev => ({ ...prev, title: s }))
+                                                            setTitleFocused(false)
+                                                        }}
+                                                    >
+                                                        {s}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 )}
                                 {showArtistInput && (
-                                    <input
-                                        ref={artistInputRef}
-                                        type="text" placeholder="Guess the Artist..."
-                                        className="input-field"
-                                        value={guess.artist}
-                                        onChange={(e) => setGuess(prev => ({ ...prev, artist: e.target.value }))}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault()
-                                                submitGuess()
-                                            }
-                                        }}
-                                        disabled={hasSubmitted || !canGuess}
-                                    />
+                                    <div style={{ position: 'relative' }}>
+                                        <input
+                                            ref={artistInputRef}
+                                            type="text" placeholder="Guess the Artist..."
+                                            className="input-field"
+                                            value={guess.artist}
+                                            onChange={(e) => setGuess(prev => ({ ...prev, artist: e.target.value }))}
+                                            onFocus={() => setArtistFocused(true)}
+                                            onBlur={() => setTimeout(() => setArtistFocused(false), 150)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault()
+                                                    submitGuess()
+                                                }
+                                                if (e.key === 'Escape') setArtistFocused(false)
+                                            }}
+                                            disabled={hasSubmitted || !canGuess}
+                                        />
+                                        {artistFocused && artistSuggestions.length > 0 && (
+                                            <div className="autocomplete-dropdown">
+                                                {artistSuggestions.map((s, i) => (
+                                                    <div
+                                                        key={i}
+                                                        className="autocomplete-item"
+                                                        onMouseDown={() => {
+                                                            setGuess(prev => ({ ...prev, artist: s }))
+                                                            setArtistFocused(false)
+                                                        }}
+                                                    >
+                                                        {s}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
                                 )}
                                 <button
                                     className="btn-primary"

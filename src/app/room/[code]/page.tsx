@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { db } from '@/lib/firebase'
-import { ref, get, set, onDisconnect, update } from 'firebase/database'
+import { ref, get, set, onDisconnect, update, child } from 'firebase/database'
 import { useUser } from '@/context/UserContext'
 import Lobby from '@/components/Lobby'
 import Onboarding from '@/components/Onboarding'
@@ -32,25 +32,57 @@ export default function RoomLobby() {
                     return
                 }
 
-                // 2. Add/Update Player in Firebase
+                const roomVal = snapshot.val()
+                const existingPlayer = roomVal?.players?.[profile.id]
+
+                // 2. If game is already in progress, rejoin directly
+                if (roomVal.status === 'playing' && roomVal.game_state) {
+                    // Reconstruct score from round_history if the player slot was dropped
+                    let restoredScore = existingPlayer?.score ?? 0
+                    if (!existingPlayer) {
+                        const historySnap = await get(ref(db, `rooms/${code}/round_history`))
+                        if (historySnap.exists()) {
+                            const history = Object.values(historySnap.val()) as any[]
+                            restoredScore = history.reduce((sum, round) => {
+                                const guess = (round.guesses || []).find((g: any) => g.user_id === profile.id)
+                                return sum + (guess?.points ?? 0)
+                            }, 0)
+                        }
+                    }
+
+                    await update(playerRef, {
+                        id: profile.id,
+                        username: profile.username,
+                        avatar_url: profile.avatar_url,
+                        score: restoredScore,
+                        is_host: roomVal.host_id === profile.id,
+                        is_ready: true,
+                        has_submitted: existingPlayer?.has_submitted ?? false,
+                        last_guess: existingPlayer?.last_guess ?? null,
+                        joined_at: existingPlayer?.joined_at ?? Date.now()
+                    })
+                    await onDisconnect(playerRef).cancel()
+                    router.push(`/game/${code}`)
+                    return
+                }
+
+                // 3. Normal lobby join — preserve score if already present (e.g. page refresh)
                 const playerData = {
                     id: profile.id,
                     username: profile.username,
                     avatar_url: profile.avatar_url,
-                    score: 0,
-                    is_ready: false,
-                    is_host: snapshot.val().host_id === profile.id,
-                    joined_at: Date.now()
+                    score: existingPlayer?.score ?? 0,
+                    is_ready: existingPlayer?.is_ready ?? false,
+                    is_host: roomVal.host_id === profile.id,
+                    joined_at: existingPlayer?.joined_at ?? Date.now()
                 }
 
                 await update(playerRef, playerData)
 
-                // 3. Setup Presence (The "Flawless Sync" magic)
-                // When user disconnects (closes tab), remove them from the lobby list.
-                // This ensures "Ghosts" never exist.
+                // 4. Setup Presence — remove on disconnect in lobby only
                 await onDisconnect(playerRef).remove()
 
-                setRoomData(snapshot.val())
+                setRoomData(roomVal)
                 setLoading(false)
 
             } catch (e) {

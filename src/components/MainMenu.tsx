@@ -1,7 +1,7 @@
 'use client'
 
 import { useUser } from '@/context/UserContext'
-import { Trophy, Plus, LogIn, Edit2, X, ChevronLeft, Users } from 'lucide-react'
+import { Trophy, Plus, LogIn, Edit2, X, ChevronLeft, Users, ArrowRight } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { db } from '@/lib/firebase' // Firebase DB
@@ -22,6 +22,7 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
     const [loading, setLoading] = useState(false)
     const [isSidebarOpen, setIsSidebarOpen] = useState(false)
     const [isMobile, setIsMobile] = useState(false)
+    const [activeGame, setActiveGame] = useState<{ code: string } | null>(null)
     const router = useRouter()
 
     useEffect(() => {
@@ -29,6 +30,29 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
         check()
         window.addEventListener('resize', check)
         return () => window.removeEventListener('resize', check)
+    }, [])
+
+    // Check for an active game in localStorage and verify it's still running
+    useEffect(() => {
+        const stored = localStorage.getItem('bb_active_game')
+        if (!stored) return
+        try {
+            const { code: storedCode, joinedAt } = JSON.parse(stored)
+            // Ignore stale entries older than 4 hours
+            if (Date.now() - joinedAt > 4 * 60 * 60 * 1000) {
+                localStorage.removeItem('bb_active_game')
+                return
+            }
+            get(ref(db, `rooms/${storedCode}/status`)).then(snap => {
+                if (snap.exists() && snap.val() === 'playing') {
+                    setActiveGame({ code: storedCode })
+                } else {
+                    localStorage.removeItem('bb_active_game')
+                }
+            })
+        } catch {
+            localStorage.removeItem('bb_active_game')
+        }
     }, [])
 
     if (!profile) return null
@@ -153,6 +177,44 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
             {/* Center Content */}
             <div className="container" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div style={{ width: '100%', maxWidth: '1100px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(280px, 1fr))', gap: isMobile ? '16px' : '32px' }}>
+
+                    {/* Continue Game Card — only shown if active game detected */}
+                    {activeGame && (
+                        <button
+                            onClick={() => router.push(`/room/${activeGame.code}`)}
+                            className="glass-panel"
+                            style={{
+                                height: isMobile ? '140px' : '300px',
+                                display: 'flex',
+                                flexDirection: isMobile ? 'row' : 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: isMobile ? '16px' : '24px',
+                                padding: isMobile ? '0 20px' : '0',
+                                transition: 'var(--transition)',
+                                position: 'relative',
+                                overflow: 'hidden',
+                                borderColor: 'rgba(29, 185, 84, 0.4)',
+                                borderTopColor: 'rgba(29, 185, 84, 0.6)',
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-8px)'; e.currentTarget.style.borderColor = 'var(--primary)' }}
+                            onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'rgba(29, 185, 84, 0.4)' }}
+                        >
+                            <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle, rgba(29,185,84,0.12) 0%, transparent 70%)', pointerEvents: 'none' }} />
+                            <div style={{
+                                width: isMobile ? '52px' : '80px', height: isMobile ? '52px' : '80px',
+                                borderRadius: '50%', background: 'rgba(29, 185, 84, 0.15)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: 'var(--primary)', flexShrink: 0
+                            }}>
+                                <ArrowRight size={isMobile ? 26 : 40} />
+                            </div>
+                            <div style={{ textAlign: isMobile ? 'left' : 'center', overflow: 'hidden' }}>
+                                <h2 style={{ fontSize: isMobile ? '1.3rem' : '1.8rem', marginBottom: '4px', color: 'var(--primary)' }}>Continue Game</h2>
+                                <p style={{ color: 'var(--text-muted)', fontSize: isMobile ? '0.85rem' : '1rem' }}>Room {activeGame.code} is still active</p>
+                            </div>
+                        </button>
+                    )}
 
                     {/* Create Room Card */}
                     <button
