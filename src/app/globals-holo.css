@@ -288,6 +288,93 @@ button {
     color: var(--text-main);
 }
 
+/* ── Split Import Button + Chart Dropdown ── */
+
+.import-split-btn {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+}
+
+.import-split-btn__main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    padding: 0 20px;
+    font-size: 0.9rem;
+    min-width: 88px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid rgba(0, 0, 0, 0.22);
+}
+
+.import-split-btn__chevron {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+    transition: var(--transition), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.import-split-btn__chevron svg {
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.import-split-btn__chevron[aria-expanded="true"] svg {
+    transform: rotate(180deg);
+}
+
+.chart-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 210px;
+    background: rgba(14, 15, 20, 0.97);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    z-index: 300;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+    animation: fadeIn 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.chart-dropdown__item {
+    width: 100%;
+    padding: 11px 16px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    font-family: var(--font-main);
+    color: var(--text-main);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s ease, color 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.chart-dropdown__item:last-child {
+    border-bottom: none;
+}
+
+.chart-dropdown__item:hover {
+    background: rgba(29, 185, 84, 0.12);
+    color: #1ed760;
+}
+
+.ios .chart-dropdown {
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
 /* Text gradient — green-tinted */
 .text-gradient {
     background: var(--title-gradient, linear-gradient(135deg, #ffffff 0%, rgba(29, 185, 84, 0.8) 100%));
@@ -1025,6 +1112,291 @@ select:focus {
 }
 
 /* =============================================================
+   GUESS WHO MODE
+   ============================================================= */
+.guess-who-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    width: 100%;
+    max-width: 520px;
+}
+
+.guess-who-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    padding: 0;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    overflow: hidden;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease, box-shadow 0.25s ease;
+    box-shadow: var(--glass-inner);
+    backdrop-filter: blur(12px);
+}
+
+.guess-who-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.28);
+    transform: translateY(-2px) scale(1.02);
+}
+
+.guess-who-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+    transform: none;
+}
+
+.guess-who-btn.selected {
+    background: rgba(29, 185, 84, 0.10);
+    border-color: rgba(29, 185, 84, 0.4);
+}
+
+/* Square avatar fills the top of the card */
+.guess-who-avatar {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    border-radius: 0;
+    transition: box-shadow 0.3s ease;
+}
+
+/* Name bar at the bottom */
+.guess-who-name {
+    width: 100%;
+    padding: 8px 6px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #ffffff;
+    text-align: center;
+    line-height: 1.2;
+    word-break: break-word;
+    background: rgba(0, 0, 0, 0.35);
+    /* text-shadow set inline from dominant color */
+}
+
+.guess-who-btn.correct-answer {
+    background: rgba(29, 185, 84, 0.14);
+    border-color: rgba(29, 185, 84, 0.5);
+}
+
+.guess-who-btn.wrong-answer {
+    background: rgba(248, 113, 113, 0.10);
+    border-color: rgba(248, 113, 113, 0.35);
+    opacity: 0.6;
+}
+
+/* =============================================================
+   SUDDEN DEATH VS SCREEN (TEKKEN STYLE)
+   ============================================================= */
+
+@keyframes sdFighterLeft {
+    from { opacity: 0; transform: translateX(-120px) scale(0.88); }
+    to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes sdFighterRight {
+    from { opacity: 0; transform: translateX(120px) scale(0.88); }
+    to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes sdTitleSlam {
+    0%   { opacity: 0; transform: scale(2.2) skewX(-6deg); letter-spacing: 24px; }
+    60%  { opacity: 1; transform: scale(0.95) skewX(-2deg); letter-spacing: 6px; }
+    80%  { transform: scale(1.04) skewX(0deg); letter-spacing: 7px; }
+    100% { transform: scale(1) skewX(0deg); letter-spacing: 6px; }
+}
+@keyframes sdVsPop {
+    0%   { opacity: 0; transform: scale(0.4) rotate(-15deg); }
+    60%  { transform: scale(1.15) rotate(4deg); }
+    80%  { transform: scale(0.95) rotate(-2deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+@keyframes sdFlashStripe {
+    0%, 100% { opacity: 0; }
+    5%, 15%  { opacity: 0.08; }
+}
+@keyframes sdSubtitleFade {
+    from { opacity: 0; transform: translateY(12px); letter-spacing: 8px; }
+    to   { opacity: 0.75; transform: translateY(0); letter-spacing: 5px; }
+}
+
+.sd-vs-screen {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100dvh;
+    gap: 0;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 50% 60%, rgba(180, 30, 30, 0.18) 0%, transparent 70%),
+                radial-gradient(ellipse at 20% 80%, rgba(255, 215, 0, 0.07) 0%, transparent 60%),
+                #060609;
+}
+
+/* Scanlines */
+.sd-scanlines {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 3px,
+        rgba(0, 0, 0, 0.12) 3px,
+        rgba(0, 0, 0, 0.12) 4px
+    );
+    pointer-events: none;
+    z-index: 1;
+    animation: sdFlashStripe 3s ease infinite;
+}
+
+/* Title */
+.sd-title-wrap {
+    z-index: 2;
+    margin-bottom: 40px;
+}
+
+.sd-sudden-label {
+    font-family: var(--font-display);
+    font-size: clamp(2.4rem, 7vw, 5.5rem);
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 6px;
+    color: #FFD700;
+    text-shadow:
+        0 0 20px rgba(255, 215, 0, 0.8),
+        0 0 50px rgba(255, 215, 0, 0.4),
+        0 4px 0 rgba(180, 100, 0, 0.9),
+        0 8px 20px rgba(0, 0, 0, 0.8);
+    animation: sdTitleSlam 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Players row */
+.sd-players-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 80px;
+    z-index: 2;
+    flex-wrap: wrap;
+}
+
+/* Individual fighter card */
+.sd-fighter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+}
+
+.sd-fighter--left {
+    animation: sdFighterLeft 0.5s 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.sd-fighter--right {
+    animation: sdFighterRight 0.5s 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.sd-fighter-avatar-wrap {
+    width: clamp(120px, 18vw, 180px);
+    height: clamp(120px, 18vw, 180px);
+    border-radius: 50%;
+    overflow: hidden;
+    border: 4px solid #FFD700;
+    box-shadow:
+        0 0 0 2px rgba(255, 215, 0, 0.2),
+        0 0 40px rgba(255, 215, 0, 0.45),
+        0 0 80px rgba(255, 215, 0, 0.2);
+}
+
+.sd-fighter-avatar {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.sd-fighter-name {
+    font-family: var(--font-display);
+    font-size: clamp(1.1rem, 3vw, 1.8rem);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.sd-fighter-score {
+    font-family: var(--font-display);
+    font-size: clamp(1.6rem, 4vw, 2.4rem);
+    font-weight: 900;
+    color: #FFD700;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    text-shadow: 0 0 16px rgba(255, 215, 0, 0.7);
+}
+
+.sd-fighter-score-label {
+    font-size: 0.7em;
+    font-weight: 700;
+    opacity: 0.7;
+    letter-spacing: 1px;
+}
+
+/* VS badge */
+.sd-vs-badge {
+    flex-shrink: 0;
+    align-self: center;
+    font-family: var(--font-display);
+    font-size: clamp(2.5rem, 8vw, 5rem);
+    font-weight: 900;
+    color: #ff3030;
+    text-shadow:
+        0 0 20px rgba(255, 48, 48, 0.9),
+        0 0 50px rgba(255, 48, 48, 0.5),
+        2px 4px 0 rgba(100, 0, 0, 0.9);
+    letter-spacing: 2px;
+    animation: sdVsPop 0.5s 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+    pointer-events: none;
+    z-index: 3;
+}
+
+/* Subtitle */
+.sd-subtitle {
+    margin-top: 40px;
+    font-size: clamp(0.7rem, 2vw, 0.95rem);
+    font-weight: 700;
+    letter-spacing: 5px;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.75);
+    animation: sdSubtitleFade 0.4s 1s ease both;
+    z-index: 2;
+    text-align: center;
+}
+
+/* Loading lyrics note */
+.sd-lyrics-loading {
+    margin-top: 20px;
+    color: #FFD700;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    animation: pulse 1s infinite;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 2;
+}
+
+/* iOS: simplify heavy effects */
+.ios .sd-scanlines { display: none; }
+.ios .sd-sudden-label { text-shadow: 0 0 20px rgba(255, 215, 0, 0.6); }
+
+/* =============================================================
    LOBBY PLAYER CARD ANIMATIONS
    ============================================================= */
 @keyframes lobbyCardIn {
@@ -1038,10 +1410,10 @@ select:focus {
 
 @keyframes hostPulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(29, 185, 84, 0); }
-    50%       { box-shadow: 0 0 0 6px rgba(29, 185, 84, 0.18); }
+    50%       { box-shadow: 0 0 12px 2px rgba(29, 185, 84, 0.12); }
 }
 
 .lobby-player-card.is-host {
     animation: lobbyCardIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both,
-               hostPulse 2.8s ease-in-out infinite;
+               hostPulse 3s ease-in-out 0.4s infinite;
 }

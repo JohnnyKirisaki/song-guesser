@@ -163,6 +163,38 @@ export async function fetchSpotifyData(
     return fallback
 }
 
+export type ChartKey = 'worldwide' | 'portugal'
+
+export async function fetchChartTracks(
+    chartKey: ChartKey,
+    onProgress?: (value: number) => void
+): Promise<SpotifyTrack[]> {
+    onProgress?.(5)
+
+    const res = await fetch(`/api/charts?chart=${chartKey}`)
+    const data = await res.json()
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch chart')
+
+    const tracks = data.tracks ?? []
+    if (tracks.length === 0) throw new Error('Chart returned no tracks')
+
+    // Deezer returned complete tracks (uri + preview_url) — no resolution needed
+    if (data.resolved) {
+        onProgress?.(100)
+        return tracks as SpotifyTrack[]
+    }
+
+    // Apple Music fallback: metadata only — resolve via Deezer search
+    onProgress?.(15)
+    const metadata = tracks.map((t: any) => ({ artist: t.artist, title: t.name }))
+    const resolved = await resolveViaServerBatched(metadata, (progress) => {
+        onProgress?.(15 + Math.round(progress * 0.85))
+    })
+
+    onProgress?.(100)
+    return resolved
+}
+
 export async function addSongsToRoom(roomCode: string, userId: string, tracks: SpotifyTrack[]) {
     // Push multiple songs at once
     const updates: Record<string, any> = {}
@@ -176,7 +208,7 @@ export async function addSongsToRoom(roomCode: string, userId: string, tracks: S
             spotify_uri: t.uri,
             artist_name: t.artist,
             track_name: t.name,
-            cover_url: t.cover_url,
+            cover_url: t.cover_url || null,
             preview_url: t.preview_url,
             picked_by_user_id: userId
         }

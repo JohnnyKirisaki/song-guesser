@@ -4,9 +4,10 @@ import { useState, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, remove, onDisconnect, serverTimestamp } from 'firebase/database'
-import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle } from 'lucide-react'
+import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { fetchSpotifyData, addSongsToRoom } from '@/lib/spotify'
+import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey } from '@/lib/spotify'
+import { soundManager } from '@/lib/sounds'
 import UserPopover from '@/components/UserPopover'
 
 type Player = {
@@ -24,7 +25,7 @@ type Player = {
 type RoomSettings = {
     rounds: number
     time: number
-    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only'
+    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'guess_who'
 }
 
 const RadialProgress = ({ progress, size = 24, strokeWidth = 3, color = 'currentColor' }: { progress: number, size?: number, strokeWidth?: number, color?: string }) => {
@@ -84,7 +85,10 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     const [importing, setImporting] = useState(false)
     const [importProgress, setImportProgress] = useState(0)
     const [allSongs, setAllSongs] = useState<any[]>([])
+    const [showChartMenu, setShowChartMenu] = useState(false)
     const lastProgressRef = useRef(0)
+    const prevPlayerCountRef = useRef(0)
+    const chartMenuRef = useRef<HTMLDivElement>(null)
 
     // Derived
     const currentPlayer = players.find(p => p.id === profile?.id)
@@ -130,6 +134,14 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
 
         return () => unsubscribe()
     }, [roomCode, router])
+
+    // Play a sound when a new player joins
+    useEffect(() => {
+        if (players.length > prevPlayerCountRef.current && prevPlayerCountRef.current > 0) {
+            soundManager.play('tick')
+        }
+        prevPlayerCountRef.current = players.length
+    }, [players.length])
 
     // --------------------------------------------------------------------------------
     // 1.5 PRESENCE (Hosting Status)
@@ -217,6 +229,49 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         }
     }
 
+    useEffect(() => {
+        if (!showChartMenu) return
+        const handleClickOutside = (e: globalThis.MouseEvent) => {
+            if (chartMenuRef.current && !chartMenuRef.current.contains(e.target as Node)) {
+                setShowChartMenu(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [showChartMenu])
+
+    const handleChartImport = async (chartKey: ChartKey) => {
+        if (!profile || hasImported) {
+            if (hasImported) alert('You have already imported a playlist!')
+            return
+        }
+        setShowChartMenu(false)
+        try {
+            setImporting(true)
+            setImportProgress(0)
+            lastProgressRef.current = 0
+            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true, import_progress: 0 })
+            const tracks = await fetchChartTracks(chartKey, (value) => {
+                const clamped = Math.min(100, Math.max(0, Math.round(value)))
+                setImportProgress(clamped)
+                const shouldUpdate = clamped === 100 || clamped - lastProgressRef.current >= 3
+                if (shouldUpdate) {
+                    lastProgressRef.current = clamped
+                    void update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { import_progress: clamped })
+                }
+            })
+            await addSongsToRoom(roomCode, profile.id, tracks)
+            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_ready: true, is_importing: false, import_progress: 100 })
+        } catch (error: any) {
+            console.error(error)
+            alert(error.message || 'Failed to import chart')
+            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: false, import_progress: 0 })
+        } finally {
+            setImporting(false)
+            setImportProgress(0)
+        }
+    }
+
     const startGame = async () => {
         if (!isHost) return
 
@@ -285,7 +340,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         { id: 'rapid', icon: Zap, label: 'Rapid' },
         { id: 'artist_only', icon: Mic2, label: 'Artist' },
         { id: 'song_only', icon: Disc, label: 'Song' },
-        { id: 'lyrics_only', icon: FileText, label: 'Lyrics' }
+        { id: 'lyrics_only', icon: FileText, label: 'Lyrics' },
+        { id: 'guess_who', icon: HelpCircle, label: 'Guess Who' }
     ]
 
     return (
@@ -302,12 +358,13 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1 }}>
-                    {[...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0)).map((p) => (
-                        <div key={p.id} className="glass-panel" style={{
+                    {[...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0)).map((p, idx) => (
+                        <div key={p.id} className={`glass-panel lobby-player-card${p.is_host ? ' is-host' : ''}`} style={{
                             display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px',
-                            border: '1px solid', borderColor: p.is_ready ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
+                            border: '1px solid', borderColor: p.is_ready ? 'var(--primary)' : p.is_host ? 'rgba(29,185,84,0.25)' : 'rgba(255,255,255,0.08)',
                             background: p.is_ready ? 'rgba(46, 242, 160, 0.08)' : 'rgba(255, 255, 255, 0.04)',
-                            cursor: 'pointer', transition: 'background 0.2s', height: '66px'
+                            cursor: 'pointer', transition: 'background 0.2s', height: '66px',
+                            animationDelay: `${idx * 0.07}s`
                         }}
                             onClick={(e) => openUserMenu(p, e)}
                             onContextMenu={(e) => openUserMenu(p, e)}
@@ -393,7 +450,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                 </div>
 
                 {/* IMPORT SECTION */}
-                <div className="glass-panel" style={{ padding: '20px', background: 'rgba(255,255,255,0.03)' }}>
+                <div className="glass-panel" style={{ padding: '20px', background: 'rgba(255,255,255,0.03)', overflow: 'visible' }}>
                     <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span>Import Playlist</span>
@@ -417,26 +474,55 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                 className="ui-input"
                                 style={{ flex: 1, padding: '10px' }}
                             />
-                            <button
-                                onClick={handleImport} disabled={importing || !importUrl}
-                                className="btn-primary" style={{ padding: '0 20px', fontSize: '0.9rem', minWidth: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                            >
-                                {importing ? (
-                                    <span className="import-progress">
-                                        <span
-                                            className="import-progress__ring"
-                                            style={{
-                                                ['--progress' as any]: importProgress,
-                                                borderTopColor: `hsl(${importProgress * 1.2}, 100%, 45%)`,
-                                                borderLeftColor: `hsl(${importProgress * 1.2}, 100%, 45%)`,
-                                                borderRightColor: 'transparent',
-                                                borderBottomColor: 'transparent'
-                                            }}
-                                        />
-                                        <span className="import-progress__text">{importProgress}%</span>
-                                    </span>
-                                ) : 'Import'}
-                            </button>
+                            <div className="import-split-btn" ref={chartMenuRef}>
+                                <button
+                                    onClick={handleImport}
+                                    disabled={importing || !importUrl}
+                                    className="btn-primary import-split-btn__main"
+                                >
+                                    {importing ? (
+                                        <span className="import-progress">
+                                            <span
+                                                className="import-progress__ring"
+                                                style={{
+                                                    ['--progress' as any]: importProgress,
+                                                    borderTopColor: `hsl(${importProgress * 1.2}, 100%, 45%)`,
+                                                    borderLeftColor: `hsl(${importProgress * 1.2}, 100%, 45%)`,
+                                                    borderRightColor: 'transparent',
+                                                    borderBottomColor: 'transparent'
+                                                }}
+                                            />
+                                            <span className="import-progress__text">{importProgress}%</span>
+                                        </span>
+                                    ) : 'Import'}
+                                </button>
+                                <button
+                                    onClick={() => setShowChartMenu(prev => !prev)}
+                                    disabled={importing}
+                                    className="btn-primary import-split-btn__chevron"
+                                    aria-label="Show top charts"
+                                    aria-expanded={showChartMenu}
+                                >
+                                    <ChevronDown size={16} strokeWidth={2.5} />
+                                </button>
+                                {showChartMenu && (
+                                    <div className="chart-dropdown">
+                                        <button className="chart-dropdown__item" onClick={() => handleChartImport('worldwide')}>
+                                            🌍 Top 100 Worldwide
+                                        </button>
+                                        <button className="chart-dropdown__item" onClick={() => handleChartImport('portugal')}>
+                                            <span style={{
+                                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                                width: '18px', height: '13px', borderRadius: '2px', fontSize: '0.6rem',
+                                                fontWeight: 900, letterSpacing: '0px', flexShrink: 0,
+                                                background: 'linear-gradient(to right, #006600 40%, #ff0000 40%)',
+                                                color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.6)'
+                                            }}>PT</span>
+                                            Top 100 Portugal
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>

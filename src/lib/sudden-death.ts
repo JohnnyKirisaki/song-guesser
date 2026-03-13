@@ -165,7 +165,7 @@ export async function initiateSuddenDeath(
             artist_name: '???',
             track_name: '???',
             cover_url: '',
-            spotify_uri: '' // Masked
+            spotify_uri: song.spotify_uri // Keep ID for audio refresh (numeric ID alone doesn't reveal song info)
         })
     })
 
@@ -210,7 +210,7 @@ export async function initiateSuddenDeath(
                 artist_name: '???',
                 track_name: '???',
                 cover_url: '',
-                spotify_uri: '' // Masked
+                spotify_uri: song.spotify_uri // Keep ID for audio refresh
             })
 
             const pickedIds = new Set(suddenDeathPlaylist.map(s => s.id))
@@ -277,7 +277,7 @@ export async function initiateSuddenDeath(
         await safeUpdate(ref(db, `rooms/${roomCode}/game_state`), {
             phase: 'playing',
             current_round_index: currentGameState.playlist.length, // First sudden death song
-            round_start_time: serverTimestamp() as any,
+            round_start_time: null,
             force_reveal_at: null
         })
     }, 3000)
@@ -416,7 +416,7 @@ export async function fetchMoreSuddenDeathSongs(
             artist_name: '???',
             track_name: '???',
             cover_url: '',
-            spotify_uri: '' // Masked
+            spotify_uri: song.spotify_uri // Keep ID for audio refresh
         })
 
         // 3. Update public playlist index

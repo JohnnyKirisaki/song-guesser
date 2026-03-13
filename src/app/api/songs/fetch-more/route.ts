@@ -37,7 +37,7 @@ async function resolveAudio(metadataList: any[]) {
                         uri: `itunes:${match.trackId}`,
                         name: match.trackName,
                         artist: match.artistName,
-                        cover_url: match.artworkUrl100?.replace('100x100', '600x600'),
+                        cover_url: match.artworkUrl100?.replace('100x100', '600x600') || null,
                         preview_url: match.previewUrl
                     })
                 }

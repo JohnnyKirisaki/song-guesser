@@ -183,18 +183,24 @@ export async function POST(request: Request) {
                 clampedTimeTaken = Math.min(totalTime, timeTaken)
                 const timeLeftForPlayer = Math.max(0, totalTime - clampedTimeTaken)
 
-                const scoreData = calculateScore(
-                    { artist: g.artist, title: g.title },
-                    { artist: fullSong.artist_name, title: fullSong.track_name },
-                    timeLeftForPlayer,
-                    totalTime,
-                    mode,
-                    isSuddenDeath
-                )
-
-                points = scoreData.points
-                correctTitle = scoreData.correctTitle
-                correctArtist = scoreData.correctArtist
+                if (mode === 'guess_who') {
+                    // Guess Who: player guesses who added the song (picked_by_user_id stored in title field)
+                    correctTitle = !!fullSong.picked_by_user_id && g.title === fullSong.picked_by_user_id
+                    correctArtist = false
+                    points = correctTitle ? 1 : 0
+                } else {
+                    const scoreData = calculateScore(
+                        { artist: g.artist, title: g.title },
+                        { artist: fullSong.artist_name, title: fullSong.track_name },
+                        timeLeftForPlayer,
+                        totalTime,
+                        mode,
+                        isSuddenDeath
+                    )
+                    points = scoreData.points
+                    correctTitle = scoreData.correctTitle
+                    correctArtist = scoreData.correctArtist
+                }
             }
 
             // Update Player Stats

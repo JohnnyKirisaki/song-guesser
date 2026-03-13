@@ -8,7 +8,7 @@ import { useUser } from '@/context/UserContext'
 import { GameState, SongItem } from '@/lib/game-logic'
 import { useVolume } from '@/context/VolumeContext'
 
-import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward } from 'lucide-react'
+import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward, HelpCircle } from 'lucide-react'
 import ProgressBar from '@/components/ProgressBar'
 import { soundManager } from '@/lib/sounds'
 import { processNextRound } from '@/lib/game-round-manager'
@@ -18,6 +18,7 @@ import Onboarding from '@/components/Onboarding'
 import GameRecap from '@/components/GameRecap'
 import { initiateSuddenDeath, fetchMoreSuddenDeathSongs, endSuddenDeath } from '@/lib/sudden-death'
 import UserPopover from '@/components/UserPopover'
+import GuessWhoButton from '@/components/GuessWhoButton'
 import { useIOSAudioUnlock } from '@/hooks/useIOSAudioUnlock'
 
 type Player = {
@@ -69,7 +70,6 @@ export default function GamePage() {
     const [scoreDeltas, setScoreDeltas] = useState<Record<string, number>>({})
     const [rankChanges, setRankChanges] = useState<Record<string, number>>({})
     const [roomSongs, setRoomSongs] = useState<{ track_name: string, artist_name: string }[]>([])
-    const [titleFocused, setTitleFocused] = useState(false)
     const [artistFocused, setArtistFocused] = useState(false)
 
     const { volume } = useVolume()
@@ -210,14 +210,6 @@ export default function GamePage() {
             setRoomSongs(songs.map(s => ({ track_name: s.track_name || '', artist_name: s.artist_name || '' })))
         }).catch(() => { })
     }, [code])
-
-    const titleSuggestions = useMemo(() => {
-        if (!guess.title || guess.title.length < 2) return []
-        const q = guess.title.toLowerCase()
-        return [...new Set(
-            roomSongs.filter(s => s.track_name.toLowerCase().includes(q)).map(s => s.track_name)
-        )].slice(0, 5)
-    }, [guess.title, roomSongs])
 
     const artistSuggestions = useMemo(() => {
         if (!guess.artist || guess.artist.length < 2) return []
@@ -464,14 +456,31 @@ export default function GamePage() {
     const isLyricsOnly = mode === 'lyrics_only'
     const isArtistOnly = mode === 'artist_only'
     const isSongOnly = mode === 'song_only'
-    const showTitleInput = mode !== 'artist_only'
-    const showArtistInput = mode !== 'song_only'
+    const isGuessWho = mode === 'guess_who'
+    const showTitleInput = mode !== 'artist_only' && !isGuessWho
+    const showArtistInput = mode !== 'song_only' && !isGuessWho
     const duelingIds = gameState?.dueling_player_ids || []
     const isSuddenDeath = !!gameState?.is_sudden_death
     const isDuelingPlayer = !isSuddenDeath || duelingIds.length === 0 || duelingIds.includes(profile.id)
     const canGuess = gameState?.phase === 'playing' && isDuelingPlayer
     const songPicker = currentSong ? players.find(p => p.id === currentSong.picked_by_user_id) : null
     const isMySong = songPicker?.id === profile.id
+
+    // Guess Who pyramid grid layout helper
+    const getGuessWhoRows = (ps: typeof players): (typeof players)[] => {
+        const n = ps.length
+        if (n <= 3) return [ps]
+        if (n === 4) return [ps.slice(0, 2), ps.slice(2)]
+        if (n === 5) return [ps.slice(0, 3), ps.slice(3)]
+        if (n === 6) return [ps.slice(0, 3), ps.slice(3)]
+        if (n === 7) return [ps.slice(0, 4), ps.slice(4)]
+        if (n === 8) return [ps.slice(0, 4), ps.slice(4)]
+        if (n === 9) return [ps.slice(0, 3), ps.slice(3, 6), ps.slice(6)]
+        // 10+: rows of 4
+        const rows: (typeof players)[] = []
+        for (let i = 0; i < n; i += 4) rows.push(ps.slice(i, i + 4))
+        return rows
+    }
 
     // --------------------------------------------------------------------------------
     // 1. SYNC (The Heartbeat)
@@ -723,6 +732,7 @@ export default function GamePage() {
         if (isArtistOnly) return <Mic2 size={48} className="glow-icon" />
         if (isSongOnly) return <Disc size={48} className="glow-icon" />
         if (isLyricsOnly) return <FileText size={48} className="glow-icon" />
+        if (isGuessWho) return <HelpCircle size={48} className="glow-icon" />
         if (gameState?.is_sudden_death) return <Zap size={48} color="#FFD700" className="glow-icon" />
         return <Music size={48} className="glow-icon" />
     }
@@ -1218,6 +1228,7 @@ export default function GamePage() {
     // Check if everyone submitted
     useEffect(() => {
         if (!isHost || gameState?.phase !== 'playing') return
+        if (!gameState?.round_start_time) return  // Round not started yet — ignore stale has_submitted
 
         const roundStartRaw = gameState.round_start_time
         const roundStartMs = typeof roundStartRaw === 'number'
@@ -1467,48 +1478,73 @@ export default function GamePage() {
         )
 
         return (
-            <div className="flex-center" style={{ flexDirection: 'column', height: '100dvh', gap: '40px' }}>
-                <h1 className="text-gradient" style={{ fontSize: '5rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '4px' }}>
-                    ⚔️ SUDDEN DEATH ⚔️
-                </h1>
+            <div className="sd-vs-screen">
+                {/* Scanline overlay */}
+                <div className="sd-scanlines" />
 
-                <div style={{ display: 'flex', gap: '80px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
-                    {duelingPlayers.map((p, idx) => (
-                        <div key={p.id} style={{ textAlign: 'center', animation: 'pulse 1.5s ease-in-out infinite' }}>
-                            <div style={{ width: '180px', height: '180px', borderRadius: '50%', overflow: 'hidden', border: '5px solid #FFD700', boxShadow: '0 0 40px rgba(255, 215, 0, 0.5)', margin: '0 auto' }}>
-                                <img src={p.avatar_url} alt={p.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            </div>
-                            <h2 style={{ marginTop: '24px', fontSize: '2rem', fontWeight: 700 }}>{p.username}</h2>
-                            <div style={{ fontSize: '2.5rem', fontWeight: 900, color: '#FFD700', marginTop: '8px' }}>
-                                {p.sudden_death_score || 0} <span style={{ fontSize: '1rem', verticalAlign: 'middle' }}>SD Pts</span>
-                            </div>
-                        </div>
-                    ))}
+                {/* Title */}
+                <div className="sd-title-wrap">
+                    <div className="sd-sudden-label">SUDDEN DEATH</div>
                 </div>
 
-                <div style={{ fontSize: '1.8rem', opacity: 0.9, fontWeight: 600, textAlign: 'center', maxWidth: '600px' }}>
-                    {duelingPlayers.length === 2 ? 'Head to Head' : 'Multi-Way Tie'} · First to break wins
+                {/* Players row */}
+                <div className="sd-players-row">
+                    {duelingPlayers.length === 2 ? (
+                        <>
+                            <div className="sd-fighter sd-fighter--left">
+                                <div className="sd-fighter-avatar-wrap">
+                                    <img src={duelingPlayers[0].avatar_url} alt={duelingPlayers[0].username} className="sd-fighter-avatar" />
+                                </div>
+                                <div className="sd-fighter-name">{duelingPlayers[0].username}</div>
+                                <div className="sd-fighter-score">
+                                    {duelingPlayers[0].sudden_death_score || 0}
+                                    <span className="sd-fighter-score-label">SD PTS</span>
+                                </div>
+                            </div>
+
+                            <div className="sd-vs-badge">VS</div>
+
+                            <div className="sd-fighter sd-fighter--right">
+                                <div className="sd-fighter-avatar-wrap">
+                                    <img src={duelingPlayers[1].avatar_url} alt={duelingPlayers[1].username} className="sd-fighter-avatar" />
+                                </div>
+                                <div className="sd-fighter-name">{duelingPlayers[1].username}</div>
+                                <div className="sd-fighter-score">
+                                    {duelingPlayers[1].sudden_death_score || 0}
+                                    <span className="sd-fighter-score-label">SD PTS</span>
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        duelingPlayers.map((p, idx) => (
+                            <div
+                                key={p.id}
+                                className={`sd-fighter ${idx % 2 === 0 ? 'sd-fighter--left' : 'sd-fighter--right'}`}
+                            >
+                                <div className="sd-fighter-avatar-wrap">
+                                    <img src={p.avatar_url} alt={p.username} className="sd-fighter-avatar" />
+                                </div>
+                                <div className="sd-fighter-name">{p.username}</div>
+                                <div className="sd-fighter-score">
+                                    {p.sudden_death_score || 0}
+                                    <span className="sd-fighter-score-label">SD PTS</span>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+
+                {/* Subtitle */}
+                <div className="sd-subtitle">
+                    {duelingPlayers.length === 2 ? 'HEAD TO HEAD' : 'MULTI-WAY TIE'} · FIRST TO BREAK WINS
                 </div>
 
                 {isLyricsOnly && (
-                    <div
-                        style={{
-                            marginTop: '20px',
-                            color: '#FFD700',
-                            fontSize: '1.2rem',
-                            fontWeight: 600,
-                            animation: 'pulse 1s infinite',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px'
-                        }}
-                    >
-                        <div className="animate-spin" style={{ width: '20px', height: '20px', border: '3px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
-                        FETCHING NEW SUDDEN DEATH LYRICS...
+                    <div className="sd-lyrics-loading">
+                        <div className="animate-spin" style={{ width: '18px', height: '18px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%', flexShrink: 0 }} />
+                        LOADING LYRICS...
                     </div>
                 )}
-
-
             </div>
         )
     }
@@ -1520,7 +1556,10 @@ export default function GamePage() {
     const isWaitingForAudio = !isLyricsOnlyTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
 
     // Check if this is the very first moment of the game before round 1 actually starts playing
-    const isGameStartWaiting = isWaitingForAudio && gameState?.current_round_index === 0
+    const isGameStartWaiting = isWaitingForAudio && (
+        gameState?.current_round_index === 0 ||
+        (gameState?.is_sudden_death && gameState?.current_round_index === gameState?.sudden_death_start_index)
+    )
 
     // Effective State for Render - Do NOT show reveal screen if the game is just starting (prevents Round 0 "Wrong Answer" flash)
     const isReveal = isRealReveal || (isWaitingForAudio && !isGameStartWaiting)
@@ -1793,7 +1832,33 @@ export default function GamePage() {
                                 {effectiveSong.artist_name}
                             </h3>
                             {/* We use 'songPicker' derived from currentSong mostly. Need to check if effectiveSong differs. */}
-                            {(() => {
+                            {isGuessWho ? (
+                                // Guess Who reveal: show all players, highlight who actually added it
+                                <div style={{ marginTop: '16px' }}>
+                                    <div style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        Who added this song?
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', width: '100%' }}>
+                                        {getGuessWhoRows(players).map((row, rowIdx) => (
+                                            <div key={rowIdx} style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                                                {row.map(p => {
+                                                    const isCorrectPerson = p.id === effectiveSong.picked_by_user_id
+                                                    const myGuess = players.find(pl => pl.id === profile.id)?.last_guess?.title
+                                                    const iGuessedThis = myGuess === p.id
+                                                    const extraClass = isCorrectPerson ? ' correct-answer' : (iGuessedThis && !isCorrectPerson ? ' wrong-answer' : '')
+                                                    return (
+                                                        <button key={p.id} className={`guess-who-btn${extraClass}`} disabled style={{ cursor: 'default', padding: '12px 10px' }}>
+                                                            <img src={p.avatar_url} alt={p.username} className="guess-who-avatar" style={{ width: '44px', height: '44px' }} />
+                                                            <span className="guess-who-name">{p.username}</span>
+                                                            {isCorrectPerson && <span style={{ fontSize: '0.7rem', color: '#1ed760', marginTop: '-4px' }}>✓ correct</span>}
+                                                        </button>
+                                                    )
+                                                })}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (() => {
                                 const picker = players.find(p => p.id === effectiveSong.picked_by_user_id)
                                 const isMine = picker?.id === profile.id
                                 if (picker && !isMine) {
@@ -1901,47 +1966,64 @@ export default function GamePage() {
                                 </div>
                             )}
 
+                            {/* Guess Who mode — avatar grid */}
+                            {isGuessWho && (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', width: '100%' }}>
+                                    {getGuessWhoRows(players.filter(p => !gameState?.is_sudden_death || duelingIds.includes(p.id))).map((row, rowIdx) => (
+                                        <div key={rowIdx} style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'nowrap' }}>
+                                            {row.map(p => (
+                                                <GuessWhoButton
+                                                    key={p.id}
+                                                    playerId={p.id}
+                                                    username={p.username}
+                                                    avatarUrl={p.avatar_url}
+                                                    selected={guess.title === p.id}
+                                                    disabled={hasSubmitted || !canGuess}
+                                                    onClick={() => {
+                                                        if (hasSubmitted || !canGuess) return
+                                                        setGuess({ title: p.id, artist: '' })
+                                                        // Auto-submit on tap
+                                                        setHasSubmitted(true)
+                                                        soundManager.play('tick')
+                                                        const playerRef = ref(db, `rooms/${code}/players/${profile.id}`)
+                                                        update(playerRef, {
+                                                            has_submitted: true,
+                                                            last_guess: { title: p.id, artist: '' },
+                                                            submitted_at: serverTimestamp() as any
+                                                        })
+                                                    }}
+                                                />
+                                            ))}
+                                        </div>
+                                    ))}
+                                    {hasSubmitted && (
+                                        <div style={{ marginTop: '8px', color: 'var(--primary)', fontWeight: 600, fontSize: '0.9rem' }}>
+                                            Answer locked in!
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             <div style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                 {showTitleInput && (
-                                    <div style={{ position: 'relative' }}>
-                                        <input
-                                            ref={titleInputRef}
-                                            type="text" placeholder="Guess the Song Title..."
-                                            className="input-field"
-                                            value={guess.title}
-                                            onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
-                                            onFocus={() => setTitleFocused(true)}
-                                            onBlur={() => setTimeout(() => setTitleFocused(false), 150)}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    e.preventDefault()
-                                                    if (showArtistInput) {
-                                                        artistInputRef.current?.focus()
-                                                    } else {
-                                                        submitGuess()
-                                                    }
+                                    <input
+                                        ref={titleInputRef}
+                                        type="text" placeholder="Guess the Song Title..."
+                                        className="input-field"
+                                        value={guess.title}
+                                        onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault()
+                                                if (showArtistInput) {
+                                                    artistInputRef.current?.focus()
+                                                } else {
+                                                    submitGuess()
                                                 }
-                                                if (e.key === 'Escape') setTitleFocused(false)
-                                            }}
-                                            disabled={hasSubmitted || !canGuess}
-                                        />
-                                        {titleFocused && titleSuggestions.length > 0 && (
-                                            <div className="autocomplete-dropdown">
-                                                {titleSuggestions.map((s, i) => (
-                                                    <div
-                                                        key={i}
-                                                        className="autocomplete-item"
-                                                        onMouseDown={() => {
-                                                            setGuess(prev => ({ ...prev, title: s }))
-                                                            setTitleFocused(false)
-                                                        }}
-                                                    >
-                                                        {s}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
+                                            }
+                                        }}
+                                        disabled={hasSubmitted || !canGuess}
+                                    />
                                 )}
                                 {showArtistInput && (
                                     <div style={{ position: 'relative' }}>
@@ -1980,13 +2062,15 @@ export default function GamePage() {
                                         )}
                                     </div>
                                 )}
-                                <button
-                                    className="btn-primary"
-                                    onClick={submitGuess}
-                                    disabled={hasSubmitted || !canGuess}
-                                >
-                                    {hasSubmitted ? 'ANSWER SUBMITTED' : 'SUBMIT GUESS'}
-                                </button>
+                                {!isGuessWho && (
+                                    <button
+                                        className="btn-primary"
+                                        onClick={submitGuess}
+                                        disabled={hasSubmitted || !canGuess}
+                                    >
+                                        {hasSubmitted ? 'ANSWER SUBMITTED' : 'SUBMIT GUESS'}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
