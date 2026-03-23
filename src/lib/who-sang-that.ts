@@ -47,6 +47,17 @@ export function extractWhoSangThatExcerpt(lyrics: string): string[] {
     return [cleanLines[pickIdx], cleanLines[Math.min(pickIdx + 1, cleanLines.length - 1)]]
 }
 
+function fallbackWhoSangThatExcerpt(lyrics: string): string[] {
+    const lines = lyrics
+        .split('\n')
+        .map(line => line.replace(/\[[^\]]*\]/g, '').trim())
+        .filter(Boolean)
+
+    if (lines.length === 0) return []
+    if (lines.length === 1) return [lines[0]]
+    return [lines[0], lines[1]]
+}
+
 function chooseImposterArtist(correctArtist: string, artistPool: ArtistPoolEntry[]): ArtistPoolEntry {
     const normalizedCorrectArtist = correctArtist.toLowerCase().trim()
     const mergedPool = [
@@ -71,7 +82,12 @@ export async function buildWhoSangThatExtra(
     cachedLyrics?: string | null
 ): Promise<{ extra: WhoSangThatExtra, lyricsText: string | null }> {
     const lyricsText = cachedLyrics ?? await fetchLyrics(song.artist_name, song.track_name).catch(() => null)
-    const excerpt = lyricsText ? extractWhoSangThatExcerpt(lyricsText) : []
+    const excerpt = lyricsText
+        ? (() => {
+            const extracted = extractWhoSangThatExcerpt(lyricsText)
+            return extracted.length > 0 ? extracted : fallbackWhoSangThatExcerpt(lyricsText)
+        })()
+        : []
     const imposter = chooseImposterArtist(song.artist_name, artistPool)
 
     const [correctPhoto, imposterPhoto] = await Promise.all([
