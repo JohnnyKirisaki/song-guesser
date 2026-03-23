@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey, type FailedTrack } from '@/lib/spotify'
 import { soundManager } from '@/lib/sounds'
 import UserPopover from '@/components/UserPopover'
+import LobbyChat from '@/components/LobbyChat'
 
 type Player = {
     id: string
@@ -439,6 +440,16 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                         </button>
                     </div>
                 </div>
+
+                {/* Lobby Chat */}
+                {profile && (
+                    <LobbyChat
+                        roomCode={roomCode}
+                        userId={profile.id}
+                        username={profile.username}
+                        avatarUrl={profile.avatar_url}
+                    />
+                )}
             </div>
 
             {/* RIGHT: Settings */}

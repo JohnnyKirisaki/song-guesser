@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Smile } from 'lucide-react'
+import { Smile, ChevronUp } from 'lucide-react'
 import { db } from '@/lib/firebase'
 import { ref, push, onChildAdded, serverTimestamp } from 'firebase/database'
 
@@ -174,7 +174,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
                         onMouseEnter={e => e.currentTarget.style.color = '#fff'}
                         onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
                     >
-                        <Smile size={14} />
+                        <ChevronUp size={14} />
                     </button>
                 </div>
             )}

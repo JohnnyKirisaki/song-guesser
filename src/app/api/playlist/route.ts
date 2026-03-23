@@ -1,5 +1,21 @@
 import { NextResponse } from 'next/server'
 
+async function spotifyFetch(url: string, accessToken: string, retries = 4): Promise<Response> {
+    for (let i = 0; i < retries; i++) {
+        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } })
+        if (res.status === 429) {
+            const retryAfter = parseInt(res.headers.get('Retry-After') || '2', 10)
+            const wait = Math.min((retryAfter || Math.pow(2, i)) * 1000, 10000)
+            console.warn(`[Spotify] 429 rate limited, retrying in ${wait}ms (attempt ${i + 1}/${retries})`)
+            await new Promise(r => setTimeout(r, wait))
+            continue
+        }
+        return res
+    }
+    // Final attempt without retry
+    return fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } })
+}
+
 export async function POST(request: Request) {
     try {
         const { url } = await request.json()
@@ -73,9 +89,7 @@ export async function POST(request: Request) {
             let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${resourceId}/tracks?limit=50`
 
             while (nextUrl && allItems.length < 2000) {
-                const playlistRes: Response = await fetch(nextUrl, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                })
+                const playlistRes = await spotifyFetch(nextUrl, accessToken)
 
                 if (!playlistRes.ok) {
                     if (allItems.length === 0) {
@@ -98,9 +112,8 @@ export async function POST(request: Request) {
         else if (urlType === 'artist') {
             // Fetch Artist's Top Tracks + Albums
             // First get top tracks (usually 10)
-            const topTracksRes: Response = await fetch(
-                `https://api.spotify.com/v1/artists/${resourceId}/top-tracks?market=US`,
-                { headers: { 'Authorization': `Bearer ${accessToken}` } }
+            const topTracksRes = await spotifyFetch(
+                `https://api.spotify.com/v1/artists/${resourceId}/top-tracks?market=US`, accessToken
             )
 
             if (topTracksRes.ok) {
@@ -113,9 +126,7 @@ export async function POST(request: Request) {
             const albums: any[] = []
 
             while (nextUrl && albums.length < 50) {
-                const albumsRes: Response = await fetch(nextUrl, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                })
+                const albumsRes = await spotifyFetch(nextUrl, accessToken)
 
                 if (!albumsRes.ok) break
 
@@ -128,9 +139,8 @@ export async function POST(request: Request) {
 
             // Fetch tracks from each album
             for (const album of albums.slice(0, 20)) { // Limit to 20 albums to prevent timeout
-                const albumTracksRes: Response = await fetch(
-                    `https://api.spotify.com/v1/albums/${album.id}/tracks?limit=50`,
-                    { headers: { 'Authorization': `Bearer ${accessToken}` } }
+                const albumTracksRes = await spotifyFetch(
+                    `https://api.spotify.com/v1/albums/${album.id}/tracks?limit=50`, accessToken
                 )
 
                 if (albumTracksRes.ok) {
@@ -149,9 +159,7 @@ export async function POST(request: Request) {
             let nextUrl: string | null = `https://api.spotify.com/v1/albums/${resourceId}/tracks?limit=50`
 
             while (nextUrl && allItems.length < 2000) {
-                const albumRes: Response = await fetch(nextUrl, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                })
+                const albumRes = await spotifyFetch(nextUrl, accessToken)
 
                 if (!albumRes.ok) {
                     if (allItems.length === 0) {
@@ -168,9 +176,8 @@ export async function POST(request: Request) {
                 if (!pageData.items) break
 
                 // Album tracks don't have the full structure, need to get album info for artist
-                const albumInfoRes: Response = await fetch(
-                    `https://api.spotify.com/v1/albums/${resourceId}`,
-                    { headers: { 'Authorization': `Bearer ${accessToken}` } }
+                const albumInfoRes = await spotifyFetch(
+                    `https://api.spotify.com/v1/albums/${resourceId}`, accessToken
                 )
 
                 let albumArtists = []
