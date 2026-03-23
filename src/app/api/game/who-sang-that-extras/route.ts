@@ -4,9 +4,29 @@ import { ref, get, update } from 'firebase/database'
 import { SongItem } from '@/lib/game-logic'
 import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
 
+const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 6
+
 type RoomSong = {
     artist_name?: string
     spotify_artist_id?: string | null
+}
+
+function getRecentOptionNames(
+    secrets: Record<string, SongItem>,
+    existingExtras: Record<string, { options?: Array<{ name?: string }> }>,
+    roundIndex: number
+): string[] {
+    const recent: string[] = []
+
+    for (let index = Math.max(0, roundIndex - 3); index < roundIndex; index++) {
+        const song = secrets[String(index)]
+        if (!song?.id) continue
+
+        const options = existingExtras[song.id]?.options || []
+        recent.push(...options.map(option => option?.name).filter((name): name is string => !!name))
+    }
+
+    return recent.slice(-WHO_SANG_THAT_RECENT_OPTION_LIMIT)
 }
 
 export async function POST(request: Request) {
@@ -66,7 +86,8 @@ export async function POST(request: Request) {
             if (hasOptions) continue
 
             const cachedLyrics = typeof lyricsCache[song.id] === 'string' ? lyricsCache[song.id] : null
-            const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cachedLyrics)
+            const recentOptionNames = getRecentOptionNames(secrets, existingExtras, roundIndex)
+            const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cachedLyrics, recentOptionNames)
 
             updates[`rooms/${roomCode}/who_sang_that_extras/${song.id}`] = extra
             if (lyricsText && !cachedLyrics) {

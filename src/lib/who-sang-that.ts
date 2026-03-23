@@ -58,8 +58,9 @@ function fallbackWhoSangThatExcerpt(lyrics: string): string[] {
     return [lines[0], lines[1]]
 }
 
-function chooseImposterArtist(correctArtist: string, artistPool: ArtistPoolEntry[]): ArtistPoolEntry {
+function chooseImposterArtist(correctArtist: string, artistPool: ArtistPoolEntry[], avoidArtistNames: string[] = []): ArtistPoolEntry {
     const normalizedCorrectArtist = correctArtist.toLowerCase().trim()
+    const avoidSet = new Set(avoidArtistNames.map(name => name.toLowerCase().trim()).filter(Boolean))
     const mergedPool = [
         ...artistPool,
         ...FALLBACK_ARTISTS.map(name => ({ name, spotify_artist_id: null }))
@@ -71,15 +72,18 @@ function chooseImposterArtist(correctArtist: string, artistPool: ArtistPoolEntry
             .map(artist => [artist.name.toLowerCase(), artist])
     ).values())
     const imposters = uniquePool.filter(artist => artist.name.toLowerCase() !== normalizedCorrectArtist)
+    const preferredImposters = imposters.filter(artist => !avoidSet.has(artist.name.toLowerCase()))
 
-    if (imposters.length === 0) return { name: 'Unknown Artist', spotify_artist_id: null }
-    return imposters[Math.floor(Math.random() * imposters.length)]
+    const pool = preferredImposters.length > 0 ? preferredImposters : imposters
+    if (pool.length === 0) return { name: 'Unknown Artist', spotify_artist_id: null }
+    return pool[Math.floor(Math.random() * pool.length)]
 }
 
 export async function buildWhoSangThatExtra(
     song: SongLike,
     artistPool: ArtistPoolEntry[],
-    cachedLyrics?: string | null
+    cachedLyrics?: string | null,
+    avoidArtistNames: string[] = []
 ): Promise<{ extra: WhoSangThatExtra, lyricsText: string | null }> {
     const lyricsText = cachedLyrics ?? await fetchLyrics(song.artist_name, song.track_name).catch(() => null)
     const excerpt = lyricsText
@@ -88,7 +92,7 @@ export async function buildWhoSangThatExtra(
             return extracted.length > 0 ? extracted : fallbackWhoSangThatExcerpt(lyricsText)
         })()
         : []
-    const imposter = chooseImposterArtist(song.artist_name, artistPool)
+    const imposter = chooseImposterArtist(song.artist_name, artistPool, avoidArtistNames)
 
     const [correctPhoto, imposterPhoto] = await Promise.all([
         (song.spotify_artist_id

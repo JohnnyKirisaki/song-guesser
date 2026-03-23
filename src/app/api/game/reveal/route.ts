@@ -7,6 +7,26 @@ import { fetchLyrics } from '@/lib/lyrics'
 import { resolvePlaylist } from '@/lib/deezer'
 import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
 
+const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 6
+
+function getRecentOptionNames(
+    playlist: SongItem[],
+    existingExtras: Record<string, { options?: Array<{ name?: string }> }>,
+    roundIndex: number
+): string[] {
+    const recent: string[] = []
+
+    for (let index = Math.max(0, roundIndex - 3); index < roundIndex; index++) {
+        const song = playlist[index]
+        if (!song?.id) continue
+
+        const options = existingExtras[song.id]?.options || []
+        recent.push(...options.map(option => option?.name).filter((name): name is string => !!name))
+    }
+
+    return recent.slice(-WHO_SANG_THAT_RECENT_OPTION_LIMIT)
+}
+
 export async function POST(request: Request) {
     try {
         const { roomCode, roundIndex } = await request.json()
@@ -382,6 +402,7 @@ export async function POST(request: Request) {
                         .filter((artist) => !!artist.name)
                         .map((artist) => [artist.name.toLowerCase(), artist])
                 ).values())
+                const existingExtras = roomData.who_sang_that_extras || {}
 
                 const ensureWhoSangThatExtras = async (song: SongItem, index?: number) => {
                     const extrasRef = ref(db, `rooms/${roomCode}/who_sang_that_extras/${song.id}`)
@@ -394,8 +415,11 @@ export async function POST(request: Request) {
                         : typeof roomData.lyrics_cache?.[song.id] === 'string'
                             ? roomData.lyrics_cache[song.id]
                             : null
+                    const recentOptionNames = index === undefined
+                        ? []
+                        : getRecentOptionNames(gameState.playlist || [], existingExtras, index)
 
-                    const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cachedLyrics)
+                    const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cachedLyrics, recentOptionNames)
 
                     if (!lyricsText && index !== undefined) {
                         const replacement = await findReplacementWithLyrics()
@@ -403,13 +427,14 @@ export async function POST(request: Request) {
                             applySongAtIndex(index, replacement.song)
                             updates[`rooms/${roomCode}/lyrics_cache/${replacement.song.id}`] = replacement.lyrics
 
-                            const replacementExtra = await buildWhoSangThatExtra(replacement.song, artistPool, replacement.lyrics)
+                            const replacementExtra = await buildWhoSangThatExtra(replacement.song, artistPool, replacement.lyrics, recentOptionNames)
                             updates[`rooms/${roomCode}/who_sang_that_extras/${replacement.song.id}`] = replacementExtra.extra
                             return
                         }
                     }
 
                     updates[`rooms/${roomCode}/who_sang_that_extras/${song.id}`] = extra
+                    existingExtras[song.id] = extra
 
                     if (lyricsText && !cachedLyrics) {
                         updates[pendingLyricsPath] = lyricsText

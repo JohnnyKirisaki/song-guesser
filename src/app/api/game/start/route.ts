@@ -4,6 +4,8 @@ import { ref, update } from 'firebase/database'
 import { MaskedSongItem, prepareGamePayload, SongItem } from '@/lib/game-logic'
 import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
 
+const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 6
+
 export async function POST(request: Request) {
     try {
         const { roomCode, settings } = await request.json()
@@ -81,20 +83,22 @@ export async function POST(request: Request) {
                     .filter((artist) => !!artist.name)
                     .map((artist) => [artist.name.toLowerCase(), artist])
             ).values())
-            const CONCURRENCY = 4
+            const recentOptionNames: string[] = []
 
-            for (let i = 0; i < playlist.length; i += CONCURRENCY) {
-                const batch = playlist.slice(i, i + CONCURRENCY)
-                await Promise.all(batch.map(async (song) => {
-                    const cached = updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] as string | undefined
-                    const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cached ?? null)
+            for (const song of playlist) {
+                const cached = updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] as string | undefined
+                const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cached ?? null, recentOptionNames)
 
-                    if (lyricsText && !cached) {
-                        updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] = lyricsText
-                    }
+                if (lyricsText && !cached) {
+                    updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] = lyricsText
+                }
 
-                    updates[`rooms/${roomCode}/who_sang_that_extras/${song.id}`] = extra
-                }))
+                updates[`rooms/${roomCode}/who_sang_that_extras/${song.id}`] = extra
+
+                recentOptionNames.push(...extra.options.map(option => option.name))
+                if (recentOptionNames.length > WHO_SANG_THAT_RECENT_OPTION_LIMIT) {
+                    recentOptionNames.splice(0, recentOptionNames.length - WHO_SANG_THAT_RECENT_OPTION_LIMIT)
+                }
             }
         }
 
