@@ -1565,6 +1565,19 @@ export default function GamePage() {
         }
     }, [flareIsReveal])
 
+    useEffect(() => {
+        const previousHtmlOverflow = document.documentElement.style.overflow
+        const previousBodyOverflow = document.body.style.overflow
+
+        document.documentElement.style.overflow = 'hidden'
+        document.body.style.overflow = 'hidden'
+
+        return () => {
+            document.documentElement.style.overflow = previousHtmlOverflow
+            document.body.style.overflow = previousBodyOverflow
+        }
+    }, [])
+
     // A. Finished -> Podium
     if (status === 'finished') {
         localStorage.removeItem('bb_active_game')
@@ -1702,6 +1715,8 @@ export default function GamePage() {
                     height: 300px;
                     border-radius: 50%;
                     position: relative;
+                    z-index: 0;
+                    isolation: isolate;
                     background: linear-gradient(135deg, #111, #000);
                     box-shadow: 0 0 50px rgba(0, 0, 0, 0.8),
                         inset 0 0 15px rgba(255, 255, 255, 0.05),
@@ -1908,13 +1923,13 @@ export default function GamePage() {
                         const iGotCorrect = hasResult && (myResult?.last_round_correct_title === true || myResult?.last_round_correct_artist === true)
                         const glowBoxShadow = isReveal && hasResult
                             ? iGotCorrect
-                                ? '0 0 0 2px rgba(29,185,84,0.5), 0 0 35px rgba(29,185,84,0.55), 0 0 70px rgba(29,185,84,0.22)'
-                                : '0 0 0 2px rgba(248,113,113,0.5), 0 0 35px rgba(248,113,113,0.55), 0 0 70px rgba(248,113,113,0.22)'
+                                ? '0 0 0 2px rgba(29,185,84,0.42), 0 0 22px rgba(29,185,84,0.38), 0 0 44px rgba(29,185,84,0.14)'
+                                : '0 0 0 2px rgba(248,113,113,0.42), 0 0 22px rgba(248,113,113,0.38), 0 0 44px rgba(248,113,113,0.14)'
                             : undefined
                         return (
                         <div
                             className={`vinyl-container ${isPlaying ? 'spinning' : ''} ${isReveal ? 'reveal reveal-pop' : ''}`}
-                            style={{ marginBottom: isReveal ? '18px' : '32px', transition: 'box-shadow 0.5s ease', boxShadow: glowBoxShadow }}
+                            style={{ marginBottom: isReveal ? '26px' : '32px', transition: 'box-shadow 0.5s ease', boxShadow: glowBoxShadow }}
                         >
                             <div className="vinyl-grooves" />
                             <div className={`vinyl-label ${isReveal ? 'reveal' : ''}`}>
@@ -1937,7 +1952,7 @@ export default function GamePage() {
 
                     {/* Question / Inputs */}
                     {isReveal ? (
-                        <div className="reveal-layout" style={{ textAlign: 'center', width: '100%' }}>
+                        <div className="reveal-layout" style={{ textAlign: 'center', width: '100%', position: 'relative', zIndex: 1 }}>
                             {effectiveSong.picked_by_user_id === profile.id && (
                                 <div style={{ marginBottom: '8px', fontWeight: 700, color: '#FFD700' }}>
                                     This was your song
@@ -2258,7 +2273,7 @@ export default function GamePage() {
                                         disabled={hasSubmitted || !canGuess}
                                     />
                                 )}
-                                {!isGuessWho && (
+                                {!isGuessWho && !isWhoSangThat && (
                                     <button
                                         className="btn-primary"
                                         onClick={submitGuess}
