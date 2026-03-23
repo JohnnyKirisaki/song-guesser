@@ -1,4 +1,4 @@
-import { useFriends } from '@/hooks/useFriends'
+import { useFriends, type FriendUser } from '@/hooks/useFriends'
 import { LogIn, Users, Loader2, Flame } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState, type MouseEvent } from 'react'
@@ -49,10 +49,17 @@ export default function FriendList({ currentUserId, minimal = false }: FriendLis
     const [selectedUser, setSelectedUser] = useState<FriendItem | null>(null)
     const [menuAnchor, setMenuAnchor] = useState<{ x: number, y: number } | null>(null)
 
-    const openUserMenu = (user: FriendItem, event: MouseEvent) => {
+    const openUserMenu = (user: FriendUser, event: MouseEvent) => {
         event.preventDefault()
         event.stopPropagation()
-        setSelectedUser(user)
+        setSelectedUser({
+            id: user.id,
+            username: user.username || 'Unknown',
+            avatar_url: user.avatar_url || '',
+            is_online: user.is_online,
+            hosting: user.hosting ? { roomCode: user.hosting.roomCode } : null,
+            streak: user.streak,
+        })
         setMenuAnchor({ x: event.clientX, y: event.clientY })
     }
 

@@ -44,7 +44,7 @@ export async function POST(request: Request) {
         const existingExtras = roomData.who_sang_that_extras || {}
         const lyricsCache = roomData.lyrics_cache || {}
         const artistPool = [...new Set(
-            Object.values(roomData.songs || {})
+            (Object.values(roomData.songs || {}) as RoomSong[])
                 .map((song: RoomSong) => song.artist_name?.trim())
                 .filter((name): name is string => !!name)
         )]
