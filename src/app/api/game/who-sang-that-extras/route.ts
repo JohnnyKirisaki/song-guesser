@@ -6,6 +6,7 @@ import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
 
 type RoomSong = {
     artist_name?: string
+    spotify_artist_id?: string | null
 }
 
 export async function POST(request: Request) {
@@ -43,11 +44,15 @@ export async function POST(request: Request) {
         const secrets = secretsSnap.val() as Record<string, SongItem>
         const existingExtras = roomData.who_sang_that_extras || {}
         const lyricsCache = roomData.lyrics_cache || {}
-        const artistPool = [...new Set(
+        const artistPool = Array.from(new Map(
             (Object.values(roomData.songs || {}) as RoomSong[])
-                .map((song: RoomSong) => song.artist_name?.trim())
-                .filter((name): name is string => !!name)
-        )]
+                .map((song: RoomSong) => ({
+                    name: song.artist_name?.trim() || '',
+                    spotify_artist_id: song.spotify_artist_id ?? null
+                }))
+                .filter((artist) => !!artist.name)
+                .map((artist) => [artist.name.toLowerCase(), artist])
+        ).values())
 
         const updates: Record<string, unknown> = {}
         const hydratedSongIds: string[] = []

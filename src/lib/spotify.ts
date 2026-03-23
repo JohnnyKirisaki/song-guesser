@@ -9,6 +9,7 @@ export type SpotifyTrack = {
     uri: string
     name: string
     artist: string
+    spotify_artist_id?: string | null
     cover_url: string
     preview_url: string | null
 }
@@ -37,6 +38,7 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
                 uri: t.deezer.id,
                 name: t.deezer.title,
                 artist: t.deezer.artist,
+                spotify_artist_id: t.input?.spotifyArtistId || null,
                 cover_url: t.deezer.cover_url,
                 preview_url: t.deezer.preview_url ? t.deezer.preview_url.replace(/^http:\/\//i, 'https://') : null
             }))
@@ -52,7 +54,7 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
     }
 }
 
-type TrackMeta = { artist: string, title: string, album?: string, year?: string, isrc?: string }
+type TrackMeta = { artist: string, title: string, album?: string, year?: string, isrc?: string, spotifyArtistId?: string | null }
 
 async function resolveViaServerBatched(
     metadata: TrackMeta[],
@@ -133,7 +135,8 @@ export async function fetchSpotifyData(
             title: t.name ?? '',
             album: t.album,
             year: t.year,
-            isrc: t.isrc
+            isrc: t.isrc,
+            spotifyArtistId: t.artistId ?? null
         })), (progress) => {
             onProgress?.(20 + Math.round(progress * 0.8))
         })
@@ -201,6 +204,7 @@ export async function addSongsToRoom(roomCode: string, userId: string, tracks: S
             room_code: roomCode,
             user_id: userId,
             spotify_uri: t.uri,
+            spotify_artist_id: t.spotify_artist_id || null,
             artist_name: t.artist,
             track_name: t.name,
             cover_url: t.cover_url || null,

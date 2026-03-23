@@ -1,4 +1,4 @@
-import { fetchArtistPhoto } from './artist-photos'
+import { fetchArtistPhoto, fetchSpotifyArtistPhoto } from './artist-photos'
 import { fetchLyrics } from './lyrics'
 
 const FALLBACK_ARTISTS = ['Taylor Swift', 'Drake', 'Beyonce', 'Ed Sheeran', 'Ariana Grande', 'The Weeknd', 'Bad Bunny', 'Billie Eilish']
@@ -17,6 +17,12 @@ export type WhoSangThatExtra = {
 type SongLike = {
     artist_name: string
     track_name: string
+    spotify_artist_id?: string
+}
+
+type ArtistPoolEntry = {
+    name: string
+    spotify_artist_id?: string | null
 }
 
 export function extractWhoSangThatExcerpt(lyrics: string): string[] {
@@ -41,33 +47,45 @@ export function extractWhoSangThatExcerpt(lyrics: string): string[] {
     return [cleanLines[pickIdx], cleanLines[Math.min(pickIdx + 1, cleanLines.length - 1)]]
 }
 
-function chooseImposterArtist(correctArtist: string, artistPool: string[]): string {
+function chooseImposterArtist(correctArtist: string, artistPool: ArtistPoolEntry[]): ArtistPoolEntry {
     const normalizedCorrectArtist = correctArtist.toLowerCase().trim()
-    const mergedPool = [...artistPool, ...FALLBACK_ARTISTS]
-    const uniquePool = [...new Set(mergedPool.map(name => name.trim()).filter(Boolean))]
-    const imposters = uniquePool.filter(name => name.toLowerCase() !== normalizedCorrectArtist)
+    const mergedPool = [
+        ...artistPool,
+        ...FALLBACK_ARTISTS.map(name => ({ name, spotify_artist_id: null }))
+    ]
+    const uniquePool = Array.from(new Map(
+        mergedPool
+            .map(artist => ({ name: artist.name.trim(), spotify_artist_id: artist.spotify_artist_id ?? null }))
+            .filter(artist => artist.name)
+            .map(artist => [artist.name.toLowerCase(), artist])
+    ).values())
+    const imposters = uniquePool.filter(artist => artist.name.toLowerCase() !== normalizedCorrectArtist)
 
-    if (imposters.length === 0) return 'Unknown Artist'
+    if (imposters.length === 0) return { name: 'Unknown Artist', spotify_artist_id: null }
     return imposters[Math.floor(Math.random() * imposters.length)]
 }
 
 export async function buildWhoSangThatExtra(
     song: SongLike,
-    artistPool: string[],
+    artistPool: ArtistPoolEntry[],
     cachedLyrics?: string | null
 ): Promise<{ extra: WhoSangThatExtra, lyricsText: string | null }> {
     const lyricsText = cachedLyrics ?? await fetchLyrics(song.artist_name, song.track_name).catch(() => null)
     const excerpt = lyricsText ? extractWhoSangThatExcerpt(lyricsText) : []
-    const imposterName = chooseImposterArtist(song.artist_name, artistPool)
+    const imposter = chooseImposterArtist(song.artist_name, artistPool)
 
     const [correctPhoto, imposterPhoto] = await Promise.all([
-        fetchArtistPhoto(song.artist_name).catch(() => null),
-        fetchArtistPhoto(imposterName).catch(() => null)
+        (song.spotify_artist_id
+            ? fetchSpotifyArtistPhoto(song.spotify_artist_id)
+            : fetchArtistPhoto(song.artist_name)).catch(() => null),
+        (imposter.spotify_artist_id
+            ? fetchSpotifyArtistPhoto(imposter.spotify_artist_id)
+            : fetchArtistPhoto(imposter.name)).catch(() => null)
     ])
 
     const correct = { name: song.artist_name, photo: correctPhoto }
-    const imposter = { name: imposterName, photo: imposterPhoto }
-    const options = Math.random() < 0.5 ? [correct, imposter] : [imposter, correct]
+    const imposterOption = { name: imposter.name, photo: imposterPhoto }
+    const options = Math.random() < 0.5 ? [correct, imposterOption] : [imposterOption, correct]
 
     return {
         extra: { excerpt, options },

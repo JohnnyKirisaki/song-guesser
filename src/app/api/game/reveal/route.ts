@@ -373,7 +373,15 @@ export async function POST(request: Request) {
 
         if (settings?.mode === 'who_sang_that') {
             try {
-                const artistPool = [...new Set(allSongs.map(song => song.artist_name).filter(Boolean))]
+                const artistPool = Array.from(new Map(
+                    allSongs
+                        .map(song => ({
+                            name: song.artist_name,
+                            spotify_artist_id: song.spotify_artist_id ?? null
+                        }))
+                        .filter((artist) => !!artist.name)
+                        .map((artist) => [artist.name.toLowerCase(), artist])
+                ).values())
 
                 const ensureWhoSangThatExtras = async (song: SongItem, index?: number) => {
                     const extrasRef = ref(db, `rooms/${roomCode}/who_sang_that_extras/${song.id}`)

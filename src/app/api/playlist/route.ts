@@ -213,6 +213,7 @@ export async function POST(request: Request) {
             return {
                 name: t.name,
                 artist: t.artists[0]?.name,
+                artistId: t.artists[0]?.id || null,
                 album: t.album?.name,
                 year: t.album?.release_date?.split('-')[0],
                 isrc: t.external_ids?.isrc

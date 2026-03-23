@@ -72,7 +72,15 @@ export async function POST(request: Request) {
 
         // 3b. Who Sang That - build lyrics excerpts + artist photo options
         if (settings.mode === 'who_sang_that') {
-            const artistPool = [...new Set(playlist.map(song => song.artist_name))]
+            const artistPool = Array.from(new Map(
+                playlist
+                    .map(song => ({
+                        name: song.artist_name,
+                        spotify_artist_id: song.spotify_artist_id ?? null
+                    }))
+                    .filter((artist) => !!artist.name)
+                    .map((artist) => [artist.name.toLowerCase(), artist])
+            ).values())
             const CONCURRENCY = 4
 
             for (let i = 0; i < playlist.length; i += CONCURRENCY) {

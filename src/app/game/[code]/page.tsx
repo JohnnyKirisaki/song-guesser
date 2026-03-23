@@ -1695,7 +1695,7 @@ export default function GamePage() {
     })
 
     return (
-        <div className={`game-shell ${isReveal ? 'phase-reveal' : 'phase-playing'}${isUrgentTimer ? ' time-urgent' : ''}${isWhoSangThat ? ' mode-who-sang-that' : ''}`} style={{ width: '100%', margin: '0 auto', paddingBottom: '28px', minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
+        <div className={`game-shell ${isReveal ? 'phase-reveal' : 'phase-playing'}${isUrgentTimer ? ' time-urgent' : ''}${isWhoSangThat ? ' mode-who-sang-that' : ''}`} style={{ width: '100%', margin: '0 auto', paddingBottom: isReveal ? '0' : '28px', minHeight: '100dvh', display: 'flex', flexDirection: 'column', overflow: isReveal ? 'hidden' : 'visible' }}>
             <style jsx>{`
                 .vinyl-container {
                     width: 300px;
@@ -1889,7 +1889,7 @@ export default function GamePage() {
             }
 
             {/* Main Game Area */}
-            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: '4vh', paddingBottom: '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: 'visible' }}>
+            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: isReveal ? '2vh' : '4vh', paddingBottom: isReveal ? '0' : '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: isReveal ? 'hidden' : 'visible', minHeight: 0 }}>
                 {/* Host skip button — invisible, hover to reveal */}
                 {isHost && gameState?.phase === 'playing' && (
                     <button
@@ -1900,7 +1900,7 @@ export default function GamePage() {
                         <SkipForward size={16} />
                     </button>
                 )}
-                <div className="game-core">
+                <div className={`game-core${isReveal ? ' game-core--reveal' : ''}`}>
                     {/* Album Cover Area (Hidden until Reveal for lyrics/who-sang-that modes) */}
                     {((!isLyricsOnly && !isWhoSangThat) || isReveal) && (() => {
                         const myResult = players.find(p => p.id === profile?.id)
@@ -1914,13 +1914,14 @@ export default function GamePage() {
                         return (
                         <div
                             className={`vinyl-container ${isPlaying ? 'spinning' : ''} ${isReveal ? 'reveal reveal-pop' : ''}`}
-                            style={{ marginBottom: '32px', transition: 'box-shadow 0.5s ease', boxShadow: glowBoxShadow }}
+                            style={{ marginBottom: isReveal ? '18px' : '32px', transition: 'box-shadow 0.5s ease', boxShadow: glowBoxShadow }}
                         >
                             <div className="vinyl-grooves" />
                             <div className={`vinyl-label ${isReveal ? 'reveal' : ''}`}>
                                 {isReveal ? (
                                     <img
                                         className="vinyl-cover"
+                                        alt={`${effectiveSong.track_name} cover art`}
                                         src={effectiveSong.cover_url || '/placeholder-cover.jpg'}
                                         onError={(e) => { e.currentTarget.src = '/placeholder-cover.jpg' }}
                                     />
@@ -1936,14 +1937,14 @@ export default function GamePage() {
 
                     {/* Question / Inputs */}
                     {isReveal ? (
-                        <div style={{ textAlign: 'center', width: '100%' }}>
+                        <div className="reveal-layout" style={{ textAlign: 'center', width: '100%' }}>
                             {effectiveSong.picked_by_user_id === profile.id && (
-                                <div style={{ marginBottom: '12px', fontWeight: 700, color: '#FFD700' }}>
+                                <div style={{ marginBottom: '8px', fontWeight: 700, color: '#FFD700' }}>
                                     This was your song
                                 </div>
                             )}
                             <h2 className="text-gradient reveal-slide" style={{
-                                fontSize: '2rem', fontWeight: 900, marginBottom: '8px', animationDelay: '0.1s',
+                                fontSize: 'clamp(1.5rem, 3vw, 2rem)', fontWeight: 900, marginBottom: '6px', animationDelay: '0.1s',
                                 '--title-gradient': titleGradient,
                                 textShadow: dominantColor
                                     ? `0 0 20px ${dominantColor.replace('rgb', 'rgba').replace(')', ', 0.6)')}, 0 0 40px ${dominantColor.replace('rgb', 'rgba').replace(')', ', 0.3)')}`
@@ -1951,13 +1952,13 @@ export default function GamePage() {
                             } as React.CSSProperties}>
                                 {effectiveSong.track_name}
                             </h2>
-                            <h3 className="reveal-slide" style={{ fontSize: '1.5rem', color: '#ccc', animationDelay: '0.2s' }}>
+                            <h3 className="reveal-slide" style={{ fontSize: 'clamp(1rem, 2.3vw, 1.3rem)', color: '#ccc', animationDelay: '0.2s' }}>
                                 {effectiveSong.artist_name}
                             </h3>
                             {/* We use 'songPicker' derived from currentSong mostly. Need to check if effectiveSong differs. */}
                             {isWhoSangThat ? (
                                 // Who Sang That reveal: show both options, highlight the correct artist
-                                <div style={{ marginTop: '16px' }}>
+                                <div style={{ marginTop: '12px' }}>
                                     <div style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                         The artist was...
                                     </div>
@@ -1981,7 +1982,7 @@ export default function GamePage() {
                                 </div>
                             ) : isGuessWho ? (
                                 // Guess Who reveal: show all players, highlight who actually added it
-                                <div style={{ marginTop: '16px' }}>
+                                <div style={{ marginTop: '12px' }}>
                                     <div style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                                         Who added this song?
                                     </div>
@@ -2020,9 +2021,9 @@ export default function GamePage() {
                             })()}
 
 
-                            <div className="reveal-slide" style={{ marginTop: '18px', width: '100%', maxWidth: '520px', marginLeft: 'auto', marginRight: 'auto', animationDelay: '0.3s', textAlign: 'center' }}>
-                                <div style={{ fontWeight: 700, marginBottom: '10px', opacity: 0.9 }}>Round Results</div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div className="reveal-slide reveal-results-panel" style={{ marginTop: '14px', width: '100%', maxWidth: '760px', marginLeft: 'auto', marginRight: 'auto', animationDelay: '0.3s', textAlign: 'center' }}>
+                                <div style={{ fontWeight: 700, marginBottom: '8px', opacity: 0.9 }}>Round Results</div>
+                                <div className="reveal-results-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     {displayPlayers.map((p, i) => {
                                         // If viewing previous round (waiting for audio), we rely on 'last_' stats which ARE from previous round.
                                         // But if we advanced round index, 'last_' stats might have been reset?
@@ -2045,9 +2046,9 @@ export default function GamePage() {
                                         const rankChange = rankChanges[p.id] ?? 0
 
                                         return (
-                                            <div key={p.id} className="reveal-slide" style={{
+                                            <div key={p.id} className="reveal-slide reveal-result-row" style={{
                                                 display: 'flex', alignItems: 'center', gap: '12px',
-                                                padding: '10px 14px', borderRadius: '10px',
+                                                padding: '8px 12px', borderRadius: '10px',
                                                 background: correct ? 'rgba(30, 215, 96, 0.08)' : 'rgba(233, 20, 41, 0.08)',
                                                 border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`,
                                                 cursor: 'pointer',
@@ -2071,7 +2072,7 @@ export default function GamePage() {
 
                                                 {/* Center: Avatar + Name */}
                                                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                                    <img src={p.avatar_url} style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                                                    <img src={p.avatar_url} alt={p.username} style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
                                                     <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</span>
                                                     {hasData && rankChange !== 0 && (
                                                         <span style={{ fontSize: '0.6rem', fontWeight: 700, color: rankChange > 0 ? '#1ed760' : '#e91429' }}>
@@ -2095,7 +2096,7 @@ export default function GamePage() {
                                 </div>
                             </div>
 
-                            <div style={{ marginTop: '16px', fontWeight: 'bold' }}>
+                            <div className="reveal-next-round" style={{ marginTop: '12px', fontWeight: 'bold' }}>
                                 {isWaitingForAudio ? 'Syncing Audio...' : 'Next round starting...'}
                             </div>
                         </div>

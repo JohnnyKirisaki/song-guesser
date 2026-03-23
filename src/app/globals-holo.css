@@ -914,6 +914,10 @@ select:focus {
     padding-top: 160px;
 }
 
+.game-shell.phase-reveal {
+    overflow: hidden;
+}
+
 @media (max-width: 1400px) {
     .game-shell {
         padding-left: 220px;
@@ -937,6 +941,13 @@ select:focus {
     flex-direction: column;
     align-items: center;
     transform: translateY(-20px);
+}
+
+.game-core--reveal {
+    flex: 1;
+    min-height: 0;
+    justify-content: center;
+    gap: 0;
 }
 
 .game-shell.mode-who-sang-that .game-core {
@@ -981,6 +992,34 @@ select:focus {
 
 .who-sang-that-options--reveal {
     width: min(100%, 360px) !important;
+}
+
+.phase-reveal .vinyl-container {
+    width: clamp(180px, 22vh, 240px);
+    height: clamp(180px, 22vh, 240px);
+}
+
+.reveal-layout {
+    max-width: min(920px, 100%);
+    margin: 0 auto;
+}
+
+.reveal-results-panel {
+    width: min(100%, 760px);
+}
+
+.reveal-results-list {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px !important;
+}
+
+.reveal-result-row {
+    min-height: 0;
+}
+
+.reveal-next-round {
+    min-height: 24px;
 }
 
 /* Lyrics Skeleton */
@@ -1069,6 +1108,19 @@ select:focus {
     .vinyl-container {
         width: 200px;
         height: 200px;
+    }
+
+    .phase-reveal .vinyl-container {
+        width: clamp(132px, 20vh, 180px);
+        height: clamp(132px, 20vh, 180px);
+    }
+
+    .reveal-results-list {
+        grid-template-columns: 1fr;
+    }
+
+    .reveal-result-row {
+        gap: 8px !important;
     }
 
     .lyrics-panel {

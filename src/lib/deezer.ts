@@ -496,9 +496,40 @@ export async function fetchDeezerArtistPhoto(artistName: string): Promise<string
         const data = await res.json()
         const artists = data?.data
         if (!artists || artists.length === 0) return null
-        // Pick the most popular artist (highest fan count) to avoid obscure matches
-        const best = artists.reduce((a: any, b: any) => (b.nb_fan || 0) > (a.nb_fan || 0) ? b : a, artists[0])
-        return best?.picture_xl || best?.picture_big || best?.picture_medium || null
+
+        const normalizedTarget = normalizeForCompare(artistName)
+        const scoredArtists = artists
+            .map((artist: any) => {
+                const normalizedName = normalizeForCompare(artist?.name || '')
+                let score = 0
+
+                if (normalizedName === normalizedTarget) score += 200
+                if (normalizedName.startsWith(`${normalizedTarget} `)) score += 60
+                if (normalizedTarget.startsWith(`${normalizedName} `)) score += 40
+
+                const targetTokens = normalizedTarget.split(' ').filter(Boolean)
+                const nameTokens = new Set(normalizedName.split(' ').filter(Boolean))
+                const matchingTokens = targetTokens.filter(token => nameTokens.has(token)).length
+                if (matchingTokens > 0) {
+                    score += matchingTokens * 25
+                    if (matchingTokens === targetTokens.length) score += 35
+                }
+
+                score += Math.min(40, Math.log10((artist?.nb_fan || 0) + 1) * 10)
+
+                return { artist, score, normalizedName, matchingTokens, targetTokenCount: targetTokens.length }
+            })
+            .sort((a: any, b: any) => b.score - a.score)
+
+        const best = scoredArtists[0]
+        if (!best) return null
+
+        const isStrongMatch = best.normalizedName === normalizedTarget ||
+            (best.matchingTokens === best.targetTokenCount && best.targetTokenCount > 0)
+
+        if (!isStrongMatch) return null
+
+        return best.artist?.picture_xl || best.artist?.picture_big || best.artist?.picture_medium || null
     } catch {
         return null
     }

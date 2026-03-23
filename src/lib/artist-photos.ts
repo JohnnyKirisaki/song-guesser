@@ -92,6 +92,7 @@ type WikipediaSummaryResponse = {
 }
 
 const artistPhotoCache = new Map<string, Promise<string | null>>()
+const spotifyArtistPhotoCache = new Map<string, Promise<string | null>>()
 
 function normalizeImageUrl(url?: string | null): string | null {
     if (!url) return null
@@ -280,6 +281,45 @@ async function fetchArtistPhotoUncached(artistName: string): Promise<string | nu
     return fetchDeezerArtistPhoto(cleanedArtist).catch(() => null)
 }
 
+async function fetchSpotifyAccessToken(): Promise<string | null> {
+    const clientId = process.env.SPOTIFY_CLIENT_ID
+    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET
+    if (!clientId || !clientSecret) return null
+
+    const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Basic ${auth}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'grant_type=client_credentials',
+        cache: 'no-store',
+    }).catch(() => null)
+
+    if (!res?.ok) return null
+    const data = await res.json().catch(() => null) as { access_token?: string } | null
+    return data?.access_token || null
+}
+
+async function fetchSpotifyArtistPhotoUncached(artistId: string): Promise<string | null> {
+    if (!artistId) return null
+
+    const accessToken = await fetchSpotifyAccessToken()
+    if (!accessToken) return null
+
+    const res = await fetch(`https://api.spotify.com/v1/artists/${encodeURIComponent(artistId)}`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+        cache: 'no-store',
+    }).catch(() => null)
+
+    if (!res?.ok) return null
+
+    const data = await res.json().catch(() => null) as { images?: Array<{ url?: string | null }> } | null
+    const imageUrl = data?.images?.[0]?.url || null
+    return normalizeImageUrl(imageUrl)
+}
+
 export async function fetchArtistPhoto(artistName: string): Promise<string | null> {
     const cacheKey = normalizeForCompare(cleanArtistName(artistName))
     if (!cacheKey) return null
@@ -290,5 +330,17 @@ export async function fetchArtistPhoto(artistName: string): Promise<string | nul
     const pending = fetchArtistPhotoUncached(artistName).catch(() => null)
 
     artistPhotoCache.set(cacheKey, pending)
+    return pending
+}
+
+export async function fetchSpotifyArtistPhoto(artistId: string): Promise<string | null> {
+    const cacheKey = artistId.trim()
+    if (!cacheKey) return null
+
+    const cached = spotifyArtistPhotoCache.get(cacheKey)
+    if (cached) return cached
+
+    const pending = fetchSpotifyArtistPhotoUncached(cacheKey).catch(() => null)
+    spotifyArtistPhotoCache.set(cacheKey, pending)
     return pending
 }
