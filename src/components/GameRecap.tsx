@@ -141,6 +141,43 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
         soundManager.play('win')
     }, [])
 
+    // Update streaks with all co-players
+    useEffect(() => {
+        if (!profile) return
+        const otherPlayers = players.filter(p => p.id !== profile.id)
+        if (otherPlayers.length === 0) return
+
+        const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD UTC
+
+        const getYesterday = (dateStr: string): string => {
+            const d = new Date(dateStr + 'T00:00:00Z')
+            d.setUTCDate(d.getUTCDate() - 1)
+            return d.toISOString().split('T')[0]
+        }
+
+        const updateStreaks = async () => {
+            for (const other of otherPlayers) {
+                try {
+                    const key = [profile.id, other.id].sort().join('_')
+                    const streakRef = ref(db, `streaks/${key}`)
+                    const snap = await get(streakRef)
+                    const data = snap.val() || { count: 0, last_date: null }
+
+                    if (data.last_date === today) continue // Already counted today
+
+                    const yesterday = getYesterday(today)
+                    const newCount = data.last_date === yesterday ? (data.count || 0) + 1 : 1
+
+                    await update(streakRef, { count: newCount, last_date: today })
+                } catch {
+                    // Silently skip streak errors
+                }
+            }
+        }
+
+        updateStreaks()
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
     useEffect(() => {
 
         const fetchStats = async () => {
@@ -162,6 +199,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                 const history = Object.values(data.round_history || {}) as RoundHistory[]
                 const settings = data.settings || {}
                 const mode = settings.mode || 'normal'
+                const isIdentityMode = mode === 'guess_who' || mode === 'who_sang_that'
 
                 if (!history.length) {
                     setStats(fallbackStats)
@@ -178,19 +216,22 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                 let fastestGuess: { guess: RoundGuess, song: RoundHistory } | null = null
 
+                // Identity mode stats: track per-player streaks and accuracy
+                const playerStreaks: Record<string, { current: number, best: number, username: string }> = {}
+                const playerAccuracy: Record<string, { correct: number, total: number, username: string }> = {}
+
                 for (const round of history) {
                     const guesses = round.guesses || []
 
                     // MODE-AWARE SCORING
                     const correctGuesses = guesses.filter(g => {
-                        if (mode === 'artist_only') return g.correct_artist
+                        if (mode === 'artist_only' || mode === 'who_sang_that') return g.correct_artist || g.correct_title
                         if (mode === 'song_only') return g.correct_title
-                        // Normal / Hardcore
+                        if (mode === 'guess_who') return g.correct_title || g.correct_artist
                         return g.correct_title && g.correct_artist
                     })
 
                     const key = round.song_id || `${round.track_name}-${round.artist_name}`
-
 
                     if (!round.is_sudden_death) {
                         if (!songCounts[key]) songCounts[key] = { count: 0, song: round }
@@ -199,6 +240,26 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                         if (!songAttempts[key]) songAttempts[key] = { total: 0, correct: 0, song: round }
                         songAttempts[key].total += guesses.length
                         songAttempts[key].correct += correctGuesses.length
+                    }
+
+                    // Track per-player streaks and accuracy for identity modes
+                    if (isIdentityMode) {
+                        for (const g of guesses) {
+                            const isCorrect = correctGuesses.includes(g)
+                            if (!playerAccuracy[g.user_id]) playerAccuracy[g.user_id] = { correct: 0, total: 0, username: g.username }
+                            playerAccuracy[g.user_id].total++
+                            if (isCorrect) playerAccuracy[g.user_id].correct++
+
+                            if (!playerStreaks[g.user_id]) playerStreaks[g.user_id] = { current: 0, best: 0, username: g.username }
+                            if (isCorrect) {
+                                playerStreaks[g.user_id].current++
+                                if (playerStreaks[g.user_id].current > playerStreaks[g.user_id].best) {
+                                    playerStreaks[g.user_id].best = playerStreaks[g.user_id].current
+                                }
+                            } else {
+                                playerStreaks[g.user_id].current = 0
+                            }
+                        }
                     }
 
                     for (const g of correctGuesses) {
@@ -224,34 +285,71 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
                 const newStats: StatItem[] = []
 
-                if (mostGuessed && mostGuessed.count > 0) {
-                    newStats.push({
-                        label: 'Most Correctly Guessed',
-                        value: formatSong(mostGuessed.song),
-                        subValue: `${mostGuessed.count} correct guesses`, // Changed from 'perfect' to 'correct' to be generic
-                        icon: Music,
-                        color: '#1ed760'
-                    })
-                }
+                if (isIdentityMode) {
+                    // Identity mode awards: Best Streak, Sharpest Eye, Fastest Guess
+                    const bestStreakPlayer = Object.values(playerStreaks).sort((a, b) => b.best - a.best)[0]
+                    const sharpestPlayer = Object.values(playerAccuracy).filter(p => p.total >= 2).sort((a, b) => (b.correct / b.total) - (a.correct / a.total))[0]
 
-                if (hardestSong) {
-                    newStats.push({
-                        label: 'Hardest Song',
-                        value: formatSong(hardestSong.song),
-                        subValue: `${Math.round((hardestSong.correct / hardestSong.total) * 100)}% accuracy`,
-                        icon: Zap,
-                        color: '#e91429'
-                    })
-                }
+                    if (bestStreakPlayer && bestStreakPlayer.best > 1) {
+                        newStats.push({
+                            label: 'Best Streak',
+                            value: bestStreakPlayer.username,
+                            subValue: `${bestStreakPlayer.best} correct in a row`,
+                            icon: Zap,
+                            color: '#f59e0b'
+                        })
+                    }
 
-                if (fastestGuess) {
-                    newStats.push({
-                        label: 'Fastest Correct Guess',
-                        value: fastestGuess.guess.username,
-                        subValue: `${formatSong(fastestGuess.song)} in ${fastestGuess.guess.time_taken.toFixed(1)} s`,
-                        icon: Clock,
-                        color: '#3b82f6'
-                    })
+                    if (sharpestPlayer && sharpestPlayer.correct > 0) {
+                        newStats.push({
+                            label: 'Sharpest Eye',
+                            value: sharpestPlayer.username,
+                            subValue: `${Math.round((sharpestPlayer.correct / sharpestPlayer.total) * 100)}% accuracy`,
+                            icon: Music,
+                            color: '#1ed760'
+                        })
+                    }
+
+                    if (fastestGuess) {
+                        newStats.push({
+                            label: 'Quickest Instinct',
+                            value: fastestGuess.guess.username,
+                            subValue: `Answered in ${fastestGuess.guess.time_taken.toFixed(1)}s`,
+                            icon: Clock,
+                            color: '#3b82f6'
+                        })
+                    }
+                } else {
+                    // Standard mode awards
+                    if (mostGuessed && mostGuessed.count > 0) {
+                        newStats.push({
+                            label: 'Most Correctly Guessed',
+                            value: formatSong(mostGuessed.song),
+                            subValue: `${mostGuessed.count} correct guesses`,
+                            icon: Music,
+                            color: '#1ed760'
+                        })
+                    }
+
+                    if (hardestSong) {
+                        newStats.push({
+                            label: 'Hardest Song',
+                            value: formatSong(hardestSong.song),
+                            subValue: `${Math.round((hardestSong.correct / hardestSong.total) * 100)}% accuracy`,
+                            icon: Zap,
+                            color: '#e91429'
+                        })
+                    }
+
+                    if (fastestGuess) {
+                        newStats.push({
+                            label: 'Fastest Correct Guess',
+                            value: fastestGuess.guess.username,
+                            subValue: `${formatSong(fastestGuess.song)} in ${fastestGuess.guess.time_taken.toFixed(1)} s`,
+                            icon: Clock,
+                            color: '#3b82f6'
+                        })
+                    }
                 }
 
                 const mergedStats = fallbackStats.map(fallback => {
@@ -259,7 +357,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     return existing || fallback
                 })
 
-                setStats(mergedStats)
+                setStats(isIdentityMode ? (newStats.length > 0 ? newStats : fallbackStats) : mergedStats)
                 setLoading(false)
             } catch (e) {
                 console.error('Failed to fetch recap stats', e)

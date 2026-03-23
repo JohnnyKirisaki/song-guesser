@@ -486,3 +486,20 @@ export async function resolvePlaylist(tracks: any[], clearLog: boolean = false):
 
     return results
 }
+
+// Fetch an artist's photo from Deezer (used by "Who Sang That?" mode)
+export async function fetchDeezerArtistPhoto(artistName: string): Promise<string | null> {
+    try {
+        const url = `https://api.deezer.com/search/artist?q=${encodeURIComponent(artistName)}&limit=10`
+        const res = await fetch(url, { cache: 'no-store' })
+        if (!res.ok) return null
+        const data = await res.json()
+        const artists = data?.data
+        if (!artists || artists.length === 0) return null
+        // Pick the most popular artist (highest fan count) to avoid obscure matches
+        const best = artists.reduce((a: any, b: any) => (b.nb_fan || 0) > (a.nb_fan || 0) ? b : a, artists[0])
+        return best?.picture_xl || best?.picture_big || best?.picture_medium || null
+    } catch {
+        return null
+    }
+}

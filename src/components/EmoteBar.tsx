@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { Smile } from 'lucide-react'
 import { db } from '@/lib/firebase'
 import { ref, push, onChildAdded, serverTimestamp } from 'firebase/database'
 
@@ -16,6 +17,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
     const [reactions, setReactions] = useState<Reaction[]>([])
     const lastAddAtRef = useRef(0)
     const [isMobile, setIsMobile] = useState(false)
+    const [collapsed, setCollapsed] = useState(false)
 
     const MAX_REACTIONS = 40
     const MIN_REACTION_INTERVAL_MS = 50
@@ -107,29 +109,75 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
 
     return (
         <>
-            {/* Buttons Bar */}
-            <div className={`glass-panel${isMobile ? ' emote-bar-mobile' : ''}`} style={{
-                position: 'fixed', right: '20px', top: '50%', transform: 'translateY(-50%)',
-                padding: '12px 6px', borderRadius: '40px', display: 'flex', flexDirection: 'column', gap: '6px', zIndex: 100
-            }}>
-                {emotes.length === 0 && <span style={{ color: '#888', fontSize: '0.8rem', padding: '0 8px' }}>No emotes</span>}
+            {/* Collapsed: emoji icon button (like volume). Expanded: full emote pill */}
+            {collapsed ? (
+                <button
+                    onClick={() => setCollapsed(false)}
+                    className="glass-panel"
+                    title="Show emotes"
+                    style={{
+                        position: 'fixed', right: '20px', top: '50%', transform: 'translateY(-50%)',
+                        zIndex: 100, width: '44px', height: '44px', borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', border: '1px solid var(--glass-border)',
+                        color: 'var(--text-muted)', padding: '0',
+                        transition: 'background 0.2s, color 0.2s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
+                    onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.background = '' }}
+                >
+                    <Smile size={20} />
+                </button>
+            ) : (
+                <div
+                    className={`glass-panel${isMobile ? ' emote-bar-mobile' : ''}`}
+                    style={{
+                        position: 'fixed', right: '20px', top: '50%', transform: 'translateY(-50%)',
+                        borderRadius: '9999px', padding: '0', zIndex: 100,
+                        display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    }}
+                >
+                    {/* Emote list */}
+                    <div style={{
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
+                        padding: '10px 6px 4px 6px',
+                    }}>
+                        {emotes.map(src => (
+                            <button
+                                key={src}
+                                onClick={() => sendEmote(src)}
+                                style={{
+                                    background: 'transparent', border: 'none',
+                                    cursor: 'pointer', transition: 'transform 0.1s',
+                                    padding: '2px', flexShrink: 0,
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.2)'}
+                                onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+                            >
+                                <img src={src} alt="emote" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
+                            </button>
+                        ))}
+                    </div>
 
-                {emotes.map(src => (
+                    {/* Collapse toggle — bottom of pill */}
                     <button
-                        key={src}
-                        onClick={() => sendEmote(src)}
+                        onClick={() => setCollapsed(true)}
+                        title="Hide emotes"
                         style={{
-                            background: 'transparent', border: 'none',
-                            cursor: 'pointer', transition: 'transform 0.1s',
-                            padding: '2px'
+                            background: 'none', border: 'none',
+                            width: '40px', height: '28px',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer', color: 'var(--text-muted)', flexShrink: 0,
+                            transition: 'color 0.2s',
+                            borderTop: '1px solid rgba(255,255,255,0.08)',
                         }}
-                        onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.2)'}
-                        onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+                        onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
                     >
-                        <img src={src} alt="emote" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
+                        <Smile size={14} />
                     </button>
-                ))}
-            </div>
+                </div>
+            )}
 
             {/* Floating Reactions Layer */}
             <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 999, overflow: 'hidden' }}>

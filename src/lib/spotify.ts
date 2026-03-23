@@ -13,8 +13,14 @@ export type SpotifyTrack = {
     preview_url: string | null
 }
 
+export type FailedTrack = { artist: string, title: string }
+
+export type ImportResult = { tracks: SpotifyTrack[], failed: FailedTrack[] }
+
+type ResolveResult = { resolved: SpotifyTrack[], failed: FailedTrack[] }
+
 // Helper: Resolve via new Server API (Deezer)
-async function resolveViaServer(metadata: any[], clearLog: boolean = false): Promise<SpotifyTrack[]> {
+async function resolveViaServer(metadata: any[], clearLog: boolean = false): Promise<ResolveResult> {
     try {
         const res = await fetch('/api/resolve-tracks', {
             method: 'POST',
@@ -25,7 +31,7 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
 
         if (!res.ok) throw new Error(data.error || 'Resolution failed')
 
-        return data.tracks
+        const resolved = data.tracks
             .filter((t: any) => t.resolved && t.deezer)
             .map((t: any) => ({
                 uri: t.deezer.id,
@@ -34,6 +40,12 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
                 cover_url: t.deezer.cover_url,
                 preview_url: t.deezer.preview_url ? t.deezer.preview_url.replace(/^http:\/\//i, 'https://') : null
             }))
+
+        const failed = data.tracks
+            .filter((t: any) => !t.resolved || !t.deezer)
+            .map((t: any) => ({ artist: t.input?.artist || '', title: t.input?.title || '' }))
+
+        return { resolved, failed }
     } catch (e) {
         console.error('Server Resolution Error:', e)
         throw e
@@ -45,34 +57,35 @@ type TrackMeta = { artist: string, title: string, album?: string, year?: string,
 async function resolveViaServerBatched(
     metadata: TrackMeta[],
     onProgress?: (value: number) => void
-): Promise<SpotifyTrack[]> {
+): Promise<ResolveResult> {
     const total = metadata.length
     if (total === 0) {
         onProgress?.(100)
-        return []
+        return { resolved: [], failed: [] }
     }
 
     const chunkSize = 25
-    const results: SpotifyTrack[] = []
+    const allResolved: SpotifyTrack[] = []
+    const allFailed: FailedTrack[] = []
     let processed = 0
 
     for (let i = 0; i < metadata.length; i += chunkSize) {
         const chunk = metadata.slice(i, i + chunkSize)
-        // Clear log only on the FIRST chunk
-        const resolved = await resolveViaServer(chunk, i === 0)
-        results.push(...resolved)
+        const { resolved, failed } = await resolveViaServer(chunk, i === 0)
+        allResolved.push(...resolved)
+        allFailed.push(...failed)
         processed += chunk.length
         const pct = Math.min(100, Math.round((processed / total) * 100))
         onProgress?.(pct)
     }
 
-    return results
+    return { resolved: allResolved, failed: allFailed }
 }
 
 export async function fetchSpotifyData(
     input: string,
     onProgress?: (value: number) => void
-): Promise<SpotifyTrack[]> {
+): Promise<ImportResult> {
     // Detect source type
     const isYouTube = input.includes('youtube.com') || input.includes('youtu.be')
     const isSpotify = input.includes('spotify.com') || input.includes('playlist')
@@ -88,20 +101,18 @@ export async function fetchSpotifyData(
         const allTracks = data.tracks || []
         if (allTracks.length === 0) throw new Error('Playlist is empty or could not be parsed')
 
-        // Shuffle but DO NOT limit: fetch all tracks (even if >50)
         const selectedMetadata = shuffleArray(allTracks)
         onProgress?.(20)
-        const resolved = await resolveViaServerBatched(selectedMetadata.map((t: any) => ({
+        const result = await resolveViaServerBatched(selectedMetadata.map((t: any) => ({
             artist: t.artist,
             title: t.name || t.title || ''
         })), (progress) => {
             onProgress?.(20 + Math.round(progress * 0.8))
         })
         onProgress?.(100)
-        return resolved
+        return { tracks: result.resolved, failed: result.failed }
 
     } else if (isSpotify) {
-        // 1. Fetch Track Metadata
         onProgress?.(5)
         const res = await fetch('/api/playlist', {
             method: 'POST',
@@ -115,11 +126,9 @@ export async function fetchSpotifyData(
         const allTracks = data.tracks
         if (allTracks.length === 0) throw new Error('Playlist is empty')
 
-        // 2. Resolve via Server (Deezer) - Shuffle but DO NOT limit
         const selectedMetadata = shuffleArray(allTracks)
         onProgress?.(20)
-        // Map new metadata fields
-        const resolved = await resolveViaServerBatched(selectedMetadata.map((t: any) => ({
+        const result = await resolveViaServerBatched(selectedMetadata.map((t: any) => ({
             artist: t.artist ?? '',
             title: t.name ?? '',
             album: t.album,
@@ -129,38 +138,24 @@ export async function fetchSpotifyData(
             onProgress?.(20 + Math.round(progress * 0.8))
         })
         onProgress?.(100)
-        return resolved
+        return { tracks: result.resolved, failed: result.failed }
     }
 
-    // B. If input is a Search Term
-    // For now, we wrap the search term into a "track" and try to resolve it, 
-    // OR we can leave the legacy iTunes search if it works for single terms.
-    // Given the CORS issues, let's try to leverage the server resolver 
-    // by treating the input as a "Title".
-
-    // Attempting to use Server Resolver for single search too
     const singleTrack = [{ artist: '', title: input }]
     try {
         onProgress?.(50)
-        const results = await resolveViaServer(singleTrack)
-        if (results.length > 0) {
+        const result = await resolveViaServer(singleTrack)
+        if (result.resolved.length > 0) {
             onProgress?.(100)
-            return results
+            return { tracks: result.resolved, failed: result.failed }
         }
     } catch (e) {
-        // Fallback or silence
+        // Fallback
     }
-
-    // If strict resolver fails (because it expects artist+title), we might throw
-    // But the user mainly complained about Playlist Import. 
-    // Let's implement a simple iTunes Server Proxy if strictly needed, 
-    // but typically "Search" implies typing "Drake". 
-    // Our resolver `queries` array does have `track.title` fallback.
-    // So `artist: '', title: 'Drake'` -> query `Drake` -> should work on Deezer!
 
     const fallback = await resolveViaServer([{ artist: '', title: input }])
     onProgress?.(100)
-    return fallback
+    return { tracks: fallback.resolved, failed: fallback.failed }
 }
 
 export type ChartKey = 'worldwide' | 'portugal'
@@ -168,7 +163,7 @@ export type ChartKey = 'worldwide' | 'portugal'
 export async function fetchChartTracks(
     chartKey: ChartKey,
     onProgress?: (value: number) => void
-): Promise<SpotifyTrack[]> {
+): Promise<ImportResult> {
     onProgress?.(5)
 
     const res = await fetch(`/api/charts?chart=${chartKey}`)
@@ -181,18 +176,18 @@ export async function fetchChartTracks(
     // Deezer returned complete tracks (uri + preview_url) — no resolution needed
     if (data.resolved) {
         onProgress?.(100)
-        return tracks as SpotifyTrack[]
+        return { tracks: tracks as SpotifyTrack[], failed: [] }
     }
 
     // Apple Music fallback: metadata only — resolve via Deezer search
     onProgress?.(15)
     const metadata = tracks.map((t: any) => ({ artist: t.artist, title: t.name }))
-    const resolved = await resolveViaServerBatched(metadata, (progress) => {
+    const result = await resolveViaServerBatched(metadata, (progress) => {
         onProgress?.(15 + Math.round(progress * 0.85))
     })
 
     onProgress?.(100)
-    return resolved
+    return { tracks: result.resolved, failed: result.failed }
 }
 
 export async function addSongsToRoom(roomCode: string, userId: string, tracks: SpotifyTrack[]) {

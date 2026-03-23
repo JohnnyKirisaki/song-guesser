@@ -125,6 +125,84 @@ body::after {
     100% { transform: translate(-50%, -50%) scale(1.25); opacity: 0.3; }
 }
 
+/* Extra flares on html element — top-right small + bottom-left medium */
+html::before,
+html::after {
+    content: "";
+    position: fixed;
+    border-radius: 50%;
+    z-index: -3;
+    pointer-events: none;
+}
+
+html::before {
+    /* Top-right — small teal accent */
+    width: 22vw;
+    height: 22vw;
+    background: radial-gradient(circle, rgba(96, 165, 250, 0.45) 0%, transparent 65%);
+    top: 5vw;
+    right: 2vw;
+    filter: blur(70px);
+    opacity: 0.18;
+    animation: floatB 54s ease-in-out infinite alternate;
+}
+
+html::after {
+    /* Bottom-left — medium warm indigo */
+    width: 30vw;
+    height: 30vw;
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.4) 0%, transparent 65%);
+    bottom: 10vw;
+    left: 5vw;
+    filter: blur(90px);
+    opacity: 0.15;
+    animation: floatB 70s ease-in-out infinite alternate-reverse;
+    animation-delay: -25s;
+}
+
+/* Two tiny sharp flares — adds depth at different positions */
+.noise-overlay::before,
+.noise-overlay::after {
+    content: "";
+    position: fixed;
+    border-radius: 50%;
+    z-index: -3;
+    pointer-events: none;
+}
+
+.noise-overlay::before {
+    /* Mid-left — tiny green spark */
+    width: 14vw;
+    height: 14vw;
+    background: radial-gradient(circle, rgba(29, 185, 84, 0.5) 0%, transparent 60%);
+    top: 45%;
+    left: -2vw;
+    filter: blur(50px);
+    opacity: 0.2;
+    animation: floatB 42s ease-in-out infinite alternate;
+    animation-delay: -10s;
+}
+
+.noise-overlay::after {
+    /* Mid-right bottom — small purple */
+    width: 18vw;
+    height: 18vw;
+    background: radial-gradient(circle, rgba(168, 85, 247, 0.38) 0%, transparent 60%);
+    bottom: 20%;
+    right: 3vw;
+    filter: blur(60px);
+    opacity: 0.14;
+    animation: floatB 65s ease-in-out infinite alternate;
+    animation-delay: -35s;
+}
+
+@keyframes floatB {
+    0%   { transform: translate(0, 0) scale(1); }
+    35%  { transform: translate(5vw, -7vw) scale(1.1); }
+    70%  { transform: translate(-4vw, 5vw) scale(0.95); }
+    100% { transform: translate(8vw, 10vw) scale(1.05); }
+}
+
 @keyframes floatUp {
     0%   { transform: translateY(0) scale(0.5); opacity: 0; }
     10%  { transform: translateY(-20px) scale(1.2); opacity: 1; }
@@ -746,10 +824,41 @@ select:focus {
     width: 240px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    max-height: calc(100% - 160px);
-    overflow-y: auto;
+    gap: 8px;
+    max-height: calc(100dvh - 160px);
+    overflow: hidden;
     z-index: 50;
+}
+
+/* 5+ players: 2-column grid */
+.game-leaderboard.grid-mode {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 300px;
+    align-content: start;
+}
+
+.game-leaderboard.grid-mode .leaderboard-title {
+    grid-column: 1 / -1;
+}
+
+/* 7+ players: shrink card padding + avatar */
+.game-leaderboard.compact .player-card {
+    padding: 6px 10px;
+    gap: 8px;
+}
+
+.game-leaderboard.compact .player-card img {
+    width: 24px !important;
+    height: 24px !important;
+}
+
+.game-leaderboard.compact .player-card .player-name {
+    font-size: 0.78rem;
+}
+
+.game-leaderboard.compact .player-card .player-score {
+    font-size: 0.68rem;
 }
 
 @media (max-width: 1200px) {
@@ -1175,7 +1284,7 @@ select:focus {
     text-align: center;
     line-height: 1.2;
     word-break: break-word;
-    background: rgba(0, 0, 0, 0.35);
+    background: transparent;
     /* text-shadow set inline from dominant color */
 }
 

@@ -188,6 +188,11 @@ export async function POST(request: Request) {
                     correctTitle = !!fullSong.picked_by_user_id && g.title === fullSong.picked_by_user_id
                     correctArtist = false
                     points = correctTitle ? 1 : 0
+                } else if (mode === 'who_sang_that') {
+                    // Who Sang That: player guesses the artist from lyrics (artist name stored in title field)
+                    correctTitle = !!g.title && g.title.toLowerCase().trim() === fullSong.artist_name.toLowerCase().trim()
+                    correctArtist = false
+                    points = correctTitle ? 1 : 0
                 } else {
                     const scoreData = calculateScore(
                         { artist: g.artist, title: g.title },

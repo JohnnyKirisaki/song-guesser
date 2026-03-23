@@ -2,6 +2,28 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/firebase'
 import { ref, update } from 'firebase/database'
 import { prepareGamePayload, SongItem } from '@/lib/game-logic'
+import { fetchDeezerArtistPhoto } from '@/lib/deezer'
+import { fetchLyrics } from '@/lib/lyrics'
+
+function extractLyricsExcerpt(lyrics: string): string[] {
+    const FILLER_RE = /^(oh+|ah+|na+|la+|hey+|yeah+|uh+|mm+|hm+|woo+|ay+|yea+|ooh+|bah+|da+|doo+|sha+|bay+|whoa+|hmm+|mmm+|ohh+|yeh+|nah+|aye+|woah+|ooo+)[\s,!?.~\-*]*$/i
+    const cleanLines = lyrics.split('\n').map(l => l.trim()).filter(l => {
+        if (!l || l.length < 10) return false
+        if (l.startsWith('[') || l.startsWith('(')) return false
+        const words = l.split(/\s+/).filter(w => w.length > 0)
+        if (words.length < 3) return false
+        const nonFiller = words.filter(w => !FILLER_RE.test(w))
+        return nonFiller.length >= 2
+    })
+    if (cleanLines.length === 0) return []
+    if (cleanLines.length === 1) return [cleanLines[0]]
+    const startIdx = Math.max(0, Math.floor(cleanLines.length * 0.2))
+    const endIdx = Math.min(cleanLines.length - 2, Math.floor(cleanLines.length * 0.65))
+    const pickIdx = endIdx > startIdx
+        ? startIdx + Math.floor(Math.random() * (endIdx - startIdx + 1))
+        : startIdx
+    return [cleanLines[pickIdx], cleanLines[Math.min(pickIdx + 1, cleanLines.length - 1)]]
+}
 
 export async function POST(request: Request) {
     try {
@@ -118,6 +140,51 @@ export async function POST(request: Request) {
             Object.entries(lyricsUpdates).forEach(([path, val]) => {
                 updates[path] = val
             })
+        }
+
+        // 3b. Who Sang That — build lyrics excerpts + artist photo options
+        if (settings.mode === 'who_sang_that') {
+            // Build pool of unique artist names across the playlist
+            const artistPool = [...new Set(playlist.map(s => s.artist_name))]
+
+            // Process songs with moderate parallelism (4 at a time to avoid rate limiting)
+            const CONCURRENCY = 4
+            for (let i = 0; i < playlist.length; i += CONCURRENCY) {
+                const batch = playlist.slice(i, i + CONCURRENCY)
+                await Promise.all(batch.map(async (song) => {
+                    // 1. Try to get lyrics excerpt from cache
+                    let excerpt: string[] = []
+                    const cached = updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] as string | undefined
+                    const lyricsText = cached || await fetchLyrics(song.artist_name, song.track_name).catch(() => null)
+                    if (lyricsText) {
+                        excerpt = extractLyricsExcerpt(lyricsText)
+                        if (!cached) {
+                            updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] = lyricsText
+                        }
+                    }
+
+                    // 2. Pick an imposter artist (different from correct)
+                    const FALLBACK_ARTISTS = ['Taylor Swift', 'Drake', 'Beyoncé', 'Ed Sheeran', 'Ariana Grande', 'The Weeknd', 'Bad Bunny', 'Billie Eilish']
+                    const imposters = artistPool.filter(a => a.toLowerCase() !== song.artist_name.toLowerCase())
+                    const imposterPool = imposters.length > 0 ? imposters : FALLBACK_ARTISTS.filter(a => a.toLowerCase() !== song.artist_name.toLowerCase())
+                    const imposterName = imposterPool.length > 0
+                        ? imposterPool[Math.floor(Math.random() * imposterPool.length)]
+                        : 'Unknown Artist'
+
+                    // 3. Fetch Deezer artist photos in parallel
+                    const [correctPhoto, imposterPhoto] = await Promise.all([
+                        fetchDeezerArtistPhoto(song.artist_name).catch(() => null),
+                        fetchDeezerArtistPhoto(imposterName).catch(() => null)
+                    ])
+
+                    // 4. Shuffle options (so correct isn't always first)
+                    const correct = { name: song.artist_name, photo: correctPhoto }
+                    const imposter = { name: imposterName, photo: imposterPhoto }
+                    const options = Math.random() < 0.5 ? [correct, imposter] : [imposter, correct]
+
+                    updates[`rooms/${roomCode}/who_sang_that_extras/${song.id}`] = { excerpt, options }
+                }))
+            }
         }
 
         // 4. Commit to Firebase

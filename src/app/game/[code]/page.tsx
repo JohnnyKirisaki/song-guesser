@@ -8,7 +8,7 @@ import { useUser } from '@/context/UserContext'
 import { GameState, SongItem } from '@/lib/game-logic'
 import { useVolume } from '@/context/VolumeContext'
 
-import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward, HelpCircle } from 'lucide-react'
+import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward, HelpCircle, Mic } from 'lucide-react'
 import ProgressBar from '@/components/ProgressBar'
 import { soundManager } from '@/lib/sounds'
 import { processNextRound } from '@/lib/game-round-manager'
@@ -71,6 +71,10 @@ export default function GamePage() {
     const [rankChanges, setRankChanges] = useState<Record<string, number>>({})
     const [roomSongs, setRoomSongs] = useState<{ track_name: string, artist_name: string }[]>([])
     const [artistFocused, setArtistFocused] = useState(false)
+    const [whoSangThatData, setWhoSangThatData] = useState<{
+        excerpt: string[]
+        options: { name: string, photo: string | null }[]
+    } | null>(null)
 
     const { volume } = useVolume()
     const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
@@ -79,9 +83,10 @@ export default function GamePage() {
     // Derived State Needed for useColor at top-level
     const currentSongTemp = gameState?.playlist[gameState?.current_round_index || 0]
     const isLyricsOnlyTemp = roomSettings?.mode === 'lyrics_only'
+    const isWhoSangThatTemp = roomSettings?.mode === 'who_sang_that'
     const isRealRevealTemp = gameState?.phase === 'reveal'
     const isAudioStaleTemp = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
-    const isWaitingForAudioTemp = !isLyricsOnlyTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStaleTemp || !gameState.round_start_time)
+    const isWaitingForAudioTemp = !isLyricsOnlyTemp && !isWhoSangThatTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStaleTemp || !gameState.round_start_time)
     const previousSongTemp = (gameState?.current_round_index || 0) > 0 ? gameState?.playlist[(gameState?.current_round_index || 0) - 1] : null
     const effectiveSongTemp = (isWaitingForAudioTemp && previousSongTemp) ? previousSongTemp : currentSongTemp
 
@@ -457,8 +462,9 @@ export default function GamePage() {
     const isArtistOnly = mode === 'artist_only'
     const isSongOnly = mode === 'song_only'
     const isGuessWho = mode === 'guess_who'
-    const showTitleInput = mode !== 'artist_only' && !isGuessWho
-    const showArtistInput = mode !== 'song_only' && !isGuessWho
+    const isWhoSangThat = mode === 'who_sang_that'
+    const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat
+    const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat
     const duelingIds = gameState?.dueling_player_ids || []
     const isSuddenDeath = !!gameState?.is_sudden_death
     const isDuelingPlayer = !isSuddenDeath || duelingIds.length === 0 || duelingIds.includes(profile.id)
@@ -722,6 +728,20 @@ export default function GamePage() {
         fetchLyricsForSong(nextSong, false)
     }, [gameState?.current_round_index, isLyricsOnly, gameState?.playlist])
 
+    // Who Sang That: fetch options for current song
+    useEffect(() => {
+        const isWhoSangThatMode = roomSettings?.mode === 'who_sang_that'
+        if (!isWhoSangThatMode || !currentSong?.id) {
+            setWhoSangThatData(null)
+            return
+        }
+        const extrasRef = ref(db, `rooms/${code}/who_sang_that_extras/${currentSong.id}`)
+        const unsub = onValue(extrasRef, (snap) => {
+            setWhoSangThatData(snap.exists() ? snap.val() : null)
+        })
+        return () => unsub()
+    }, [currentSong?.id, roomSettings?.mode, code])
+
     // --------------------------------------------------------------------------------
     // 3. COLOR EXTRACTION (Dynamic Backgrounds)
     // --------------------------------------------------------------------------------
@@ -733,6 +753,7 @@ export default function GamePage() {
         if (isSongOnly) return <Disc size={48} className="glow-icon" />
         if (isLyricsOnly) return <FileText size={48} className="glow-icon" />
         if (isGuessWho) return <HelpCircle size={48} className="glow-icon" />
+        if (isWhoSangThat) return <Mic size={48} className="glow-icon" />
         if (gameState?.is_sudden_death) return <Zap size={48} color="#FFD700" className="glow-icon" />
         return <Music size={48} className="glow-icon" />
     }
@@ -772,7 +793,8 @@ export default function GamePage() {
         if (!gameState || !currentSong) return
 
         const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
-        const shouldPlayAudio = gameState.phase === 'reveal' || (!isLyricsOnly && gameState.phase === 'playing')
+        const isWhoSangThatMode = roomSettings?.mode === 'who_sang_that'
+        const shouldPlayAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatMode && gameState.phase === 'playing')
         const previewUrl = typeof currentSong.preview_url === 'string' ? currentSong.preview_url.trim() : ''
         const normalizedPreview = previewUrl.replace(/^http:\/\//i, 'https://')
         const overridePreview = currentSong?.id ? audioPreviewOverrideRef.current[currentSong.id] : null
@@ -859,8 +881,8 @@ export default function GamePage() {
                 setAudioStatus('loading')
                 setAudioLoadError(false)
             }
-            // Lyrics mode: only reveal audio, and avoid expired Spotify previews
-            if (isLyricsOnly && gameState.phase === 'reveal') {
+            // Lyrics/Who Sang That mode: only reveal audio, and avoid expired Spotify previews
+            if ((isLyricsOnly || isWhoSangThatMode) && gameState.phase === 'reveal') {
                 const matchExp = previewToUse.match(/exp=(\d+)/)
                 const expTime = matchExp ? parseInt(matchExp[1]) : 0
                 const isExpired = expTime > 0 && expTime < nowSeconds + 60
@@ -975,8 +997,8 @@ export default function GamePage() {
         if (!isHost || gameState?.phase !== 'playing') return
         if (gameState?.round_start_time) return // Already started
 
-        // If lyrics only mode, there is no audio to wait for, so start immediately
-        if (roomSettings?.mode === 'lyrics_only') {
+        // If lyrics only or who_sang_that mode, there is no audio to wait for, so start immediately
+        if (roomSettings?.mode === 'lyrics_only' || roomSettings?.mode === 'who_sang_that') {
             update(ref(db, `rooms/${code}/game_state`), {
                 round_start_time: serverTimestamp() as any
             })
@@ -1145,11 +1167,12 @@ export default function GamePage() {
     const AudioStatusIndicator = () => {
         if (!gameState || !currentSong) return null
         const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
+        const isWhoSangThatAudio = roomSettings?.mode === 'who_sang_that'
         // Only show during playing (hidden in reveal usually, unless we want to show it there too)
         // Actually, user complained about silence.
 
         // If playing/reveal phase and we expect audio:
-        const expectingAudio = gameState.phase === 'reveal' || (!isLyricsOnly && gameState.phase === 'playing')
+        const expectingAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatAudio && gameState.phase === 'playing')
 
         if (!expectingAudio) return null
 
@@ -1553,7 +1576,7 @@ export default function GamePage() {
 
     // If we are "playing" but audio is still loading, look like we are in reveal of PREVIOUS round
     const isAudioStale = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
-    const isWaitingForAudio = !isLyricsOnlyTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
+    const isWaitingForAudio = !isLyricsOnlyTemp && !isWhoSangThatTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
 
     // Check if this is the very first moment of the game before round 1 actually starts playing
     const isGameStartWaiting = isWaitingForAudio && (
@@ -1772,7 +1795,7 @@ export default function GamePage() {
             }
 
             {/* Main Game Area */}
-            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: '10vh', paddingBottom: '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: 'hidden' }}>
+            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: '4vh', paddingBottom: '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: 'hidden' }}>
                 {/* Host skip button — invisible, hover to reveal */}
                 {isHost && gameState?.phase === 'playing' && (
                     <button
@@ -1784,8 +1807,8 @@ export default function GamePage() {
                     </button>
                 )}
                 <div className="game-core">
-                    {/* Album Cover Area (Hidden until Reveal, unless not lyrics mode) */}
-                    {(!isLyricsOnly || isReveal) && (() => {
+                    {/* Album Cover Area (Hidden until Reveal for lyrics/who-sang-that modes) */}
+                    {((!isLyricsOnly && !isWhoSangThat) || isReveal) && (() => {
                         const myResult = players.find(p => p.id === profile?.id)
                         const hasResult = myResult?.last_round_correct_title !== undefined
                         const iGotCorrect = hasResult && (myResult?.last_round_correct_title === true || myResult?.last_round_correct_artist === true)
@@ -1832,7 +1855,31 @@ export default function GamePage() {
                                 {effectiveSong.artist_name}
                             </h3>
                             {/* We use 'songPicker' derived from currentSong mostly. Need to check if effectiveSong differs. */}
-                            {isGuessWho ? (
+                            {isWhoSangThat ? (
+                                // Who Sang That reveal: show both options, highlight the correct artist
+                                <div style={{ marginTop: '16px' }}>
+                                    <div style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                        The artist was...
+                                    </div>
+                                    {whoSangThatData?.options && (
+                                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                                            {whoSangThatData.options.map((opt, i) => {
+                                                const isCorrect = opt.name.toLowerCase().trim() === effectiveSong.artist_name?.toLowerCase().trim()
+                                                const myGuess = players.find(pl => pl.id === profile.id)?.last_guess?.title
+                                                const iGuessedThis = myGuess?.toLowerCase().trim() === opt.name.toLowerCase().trim()
+                                                const extraClass = isCorrect ? ' correct-answer' : (iGuessedThis && !isCorrect ? ' wrong-answer' : '')
+                                                return (
+                                                    <button key={i} className={`guess-who-btn${extraClass}`} disabled style={{ cursor: 'default', padding: '12px 10px', minWidth: '120px' }}>
+                                                        <img src={opt.photo || '/placeholder-avatar.jpg'} alt={opt.name} className="guess-who-avatar" style={{ width: '80px', height: '80px' }} />
+                                                        <span className="guess-who-name">{opt.name}</span>
+                                                        {isCorrect && <span style={{ fontSize: '0.7rem', color: '#1ed760', marginTop: '-4px' }}>✓ correct</span>}
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : isGuessWho ? (
                                 // Guess Who reveal: show all players, highlight who actually added it
                                 <div style={{ marginTop: '16px' }}>
                                     <div style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -1966,6 +2013,51 @@ export default function GamePage() {
                                 </div>
                             )}
 
+                            {/* Who Sang That mode — lyrics excerpt + 2 artist options */}
+                            {isWhoSangThat && (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', width: '100%' }}>
+                                    {/* Lyrics excerpt */}
+                                    <div className="lyrics-panel" style={{ textAlign: 'center', fontStyle: 'italic', lineHeight: 1.7 }}>
+                                        {whoSangThatData?.excerpt?.length
+                                            ? whoSangThatData.excerpt.map((line, i) => <div key={i}>{line}</div>)
+                                            : <span style={{ opacity: 0.5 }}>Who sang this song?</span>
+                                        }
+                                    </div>
+                                    {/* Artist option buttons */}
+                                    {whoSangThatData?.options && (
+                                        <div style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'nowrap', width: '100%', maxWidth: '420px' }}>
+                                            {whoSangThatData.options.map((opt, i) => (
+                                                <GuessWhoButton
+                                                    key={i}
+                                                    playerId={opt.name}
+                                                    username={opt.name}
+                                                    avatarUrl={opt.photo || '/placeholder-avatar.jpg'}
+                                                    selected={guess.title === opt.name}
+                                                    disabled={hasSubmitted || !canGuess}
+                                                    onClick={() => {
+                                                        if (hasSubmitted || !canGuess) return
+                                                        setGuess({ title: opt.name, artist: '' })
+                                                        setHasSubmitted(true)
+                                                        soundManager.play('tick')
+                                                        const playerRef = ref(db, `rooms/${code}/players/${profile.id}`)
+                                                        update(playerRef, {
+                                                            has_submitted: true,
+                                                            last_guess: { title: opt.name, artist: '' },
+                                                            submitted_at: serverTimestamp() as any
+                                                        })
+                                                    }}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                    {hasSubmitted && (
+                                        <div style={{ color: 'var(--primary)', fontWeight: 600, fontSize: '0.9rem' }}>
+                                            Answer locked in!
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Guess Who mode — avatar grid */}
                             {isGuessWho && (
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', width: '100%' }}>
@@ -2078,10 +2170,13 @@ export default function GamePage() {
             </div>
 
             {/* In-Game Leaderboard */}
-            <div className="game-leaderboard">
+            {(() => {
+                const count = displayPlayers.length
+                const isGridMode = count >= 5
+                const isCompact = count >= 7
+                return (
+            <div className={`game-leaderboard${isGridMode ? ' grid-mode' : ''}${isCompact ? ' compact' : ''}`}>
                 <div className="leaderboard-title">Leaderboard</div>
-                {/* This line was misplaced and malformed. Assuming it was meant to be a comment or a variable definition elsewhere. */}
-                {/* If 'updatedPlayers' is needed, define it in the component's logic, not directly in JSX like this. */}
                 {[...displayPlayers].sort((a, b) => {
                     // Primary: Main Score
                     if (b.score !== a.score) return b.score - a.score
@@ -2109,10 +2204,10 @@ export default function GamePage() {
                             onClick={(e) => openUserMenu(p, e)}
                             onContextMenu={(e) => openUserMenu(p, e)}
                         >
-                            <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>{p.username}</div>
-                                <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>
+                            <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div className="player-name" style={{ fontSize: '0.85rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</div>
+                                <div className="player-score" style={{ fontSize: '0.75rem', opacity: 0.7 }}>
                                     {gameState.is_sudden_death
                                         ? `${p.sudden_death_score || 0} pts (SD)`
                                         : `${p.score} pts`
@@ -2134,6 +2229,8 @@ export default function GamePage() {
                     )
                 })}
             </div>
+                )
+            })()}
 
             {/* Footer: Score & Emotes */}
             <div className="score-hud">

@@ -1,8 +1,31 @@
 import { useFriends } from '@/hooks/useFriends'
-import { User, LogIn, Sparkles, Check, X, Users, Loader2 } from 'lucide-react'
+import { User, LogIn, Sparkles, Check, X, Users, Loader2, Flame } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState, type MouseEvent } from 'react'
 import UserPopover from './UserPopover'
+
+function getStreakColor(count: number): string {
+    if (!count || count <= 0) return '#555'
+    if (count >= 100) return '#3EB489'
+    // 3-stop: day 1 = red-orange, day 50 = purple, day 100 = mint green
+    const stops = [
+        { r: 255, g: 69, b: 0 },   // #FF4500
+        { r: 138, g: 43, b: 226 }, // #8A2BE2
+        { r: 62, g: 180, b: 137 }, // #3EB489
+    ]
+    let t: number, c1: typeof stops[0], c2: typeof stops[0]
+    if (count <= 50) {
+        t = (count - 1) / 49
+        c1 = stops[0]; c2 = stops[1]
+    } else {
+        t = (count - 50) / 50
+        c1 = stops[1]; c2 = stops[2]
+    }
+    const r = Math.round(c1.r + (c2.r - c1.r) * t)
+    const g = Math.round(c1.g + (c2.g - c1.g) * t)
+    const b = Math.round(c1.b + (c2.b - c1.b) * t)
+    return `rgb(${r},${g},${b})`
+}
 
 type FriendListProps = {
     currentUserId: string
@@ -118,15 +141,39 @@ export default function FriendList({ currentUserId, minimal = false }: FriendLis
                                 </div>
                             </div>
 
-                            {friend.hosting && (
-                                <button
-                                    className="btn-primary"
-                                    style={{ padding: '6px 16px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-                                    onClick={() => router.push(`/room/${friend.hosting?.roomCode}`)}
-                                >
-                                    <LogIn size={14} /> Join
-                                </button>
-                            )}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {/* Streak flame */}
+                                {(() => {
+                                    const count = friend.streak || 0
+                                    const color = getStreakColor(count)
+                                    return (
+                                        <div
+                                            title={count > 0 ? `${count} day streak!` : 'No streak yet'}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '3px', opacity: count > 0 ? 1 : 0.35 }}
+                                        >
+                                            {count > 0 && (
+                                                <span style={{ fontSize: '0.75rem', fontWeight: 700, color }}>
+                                                    {count}
+                                                </span>
+                                            )}
+                                            <Flame
+                                                size={18}
+                                                color={color}
+                                                style={{ filter: count > 0 ? `drop-shadow(0 0 4px ${color})` : 'none' }}
+                                            />
+                                        </div>
+                                    )
+                                })()}
+                                {friend.hosting && (
+                                    <button
+                                        className="btn-primary"
+                                        style={{ padding: '6px 16px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                        onClick={() => router.push(`/room/${friend.hosting?.roomCode}`)}
+                                    >
+                                        <LogIn size={14} /> Join
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     ))}
                 </div>

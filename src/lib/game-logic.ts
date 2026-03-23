@@ -82,6 +82,15 @@ export async function prepareGamePayload(
     // 2. Global Duplicate Filtering & Selection
     // Shuffle all songs first to randomize which duplicate is kept
     const shuffledRaw = shuffleArray(allSongs)
+
+    // Build a map of song key -> set of player IDs who imported it (for no_duplicates)
+    const songOwnerMap: Record<string, Set<string>> = {}
+    shuffledRaw.forEach(song => {
+        const key = `${song.artist_name.toLowerCase().trim()}|${song.track_name.toLowerCase().trim()}`
+        if (!songOwnerMap[key]) songOwnerMap[key] = new Set()
+        songOwnerMap[key].add(song.picked_by_user_id)
+    })
+
     const uniqueSongs: SongItem[] = []
     const seenKeys = new Set<string>()
 
@@ -89,6 +98,8 @@ export async function prepareGamePayload(
         const key = `${song.artist_name.toLowerCase().trim()}|${song.track_name.toLowerCase().trim()}`
         if (!seenKeys.has(key)) {
             seenKeys.add(key)
+            // If no_duplicates is on, skip songs that appear in multiple players' playlists
+            if (settings.no_duplicates && (songOwnerMap[key]?.size || 1) > 1) return
             uniqueSongs.push(song)
         }
     })
@@ -160,7 +171,7 @@ export async function prepareGamePayload(
     const validPlaylist: SongItem[] = []
     const lyricsCache: Record<string, string> = {}
 
-    if (settings.mode === 'lyrics_only') {
+    if (settings.mode === 'lyrics_only' || settings.mode === 'who_sang_that') {
         const needed = requestedRounds
         const pool = uniqueSongs.filter(s => !playlist.find(p => p.id === s.id)) // Remaining pool
 

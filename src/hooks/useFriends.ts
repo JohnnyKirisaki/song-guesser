@@ -11,6 +11,7 @@ export type FriendUser = {
     avatar_url?: string
     status: FriendStatus
     is_online?: boolean
+    streak?: number
     hosting?: {
         roomCode: string
         created_at: number
@@ -94,13 +95,20 @@ export function useFriends() {
             // A. Fetch Profile (One-time check)
             // We assume username/avatar doesn't change frequently enough to need a listener
             // (Optimization to reduce active listeners)
-            get(ref(db, `profiles/${fid}`)).then(pSnap => {
+            get(ref(db, `profiles/${fid}`)).then(async pSnap => {
                 const pData = pSnap.val()
+
+                // A2. Fetch streak
+                const streakKey = [profile!.id, fid].sort().join('_')
+                const streakSnap = await get(ref(db, `streaks/${streakKey}`))
+                const streak = (streakSnap.val()?.count as number) || 0
+
                 const baseUser = {
                     id: fid,
                     username: pData?.username || 'Unknown',
                     avatar_url: pData?.avatar_url || '',
-                    status: 'friend'
+                    status: 'friend',
+                    streak
                 } as FriendUser
 
                 // Store base

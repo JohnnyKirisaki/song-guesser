@@ -4,9 +4,9 @@ import { useState, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, remove, onDisconnect, serverTimestamp } from 'firebase/database'
-import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown } from 'lucide-react'
+import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey } from '@/lib/spotify'
+import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey, type FailedTrack } from '@/lib/spotify'
 import { soundManager } from '@/lib/sounds'
 import UserPopover from '@/components/UserPopover'
 
@@ -25,7 +25,8 @@ type Player = {
 type RoomSettings = {
     rounds: number
     time: number
-    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'guess_who'
+    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'guess_who' | 'who_sang_that'
+    no_duplicates?: boolean
 }
 
 const RadialProgress = ({ progress, size = 24, strokeWidth = 3, color = 'currentColor' }: { progress: number, size?: number, strokeWidth?: number, color?: string }) => {
@@ -86,6 +87,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     const [importProgress, setImportProgress] = useState(0)
     const [allSongs, setAllSongs] = useState<any[]>([])
     const [showChartMenu, setShowChartMenu] = useState(false)
+    const [failedTracks, setFailedTracks] = useState<FailedTrack[]>([])
+    const [showFailedModal, setShowFailedModal] = useState(false)
     const lastProgressRef = useRef(0)
     const prevPlayerCountRef = useRef(0)
     const chartMenuRef = useRef<HTMLDivElement>(null)
@@ -202,7 +205,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
             // Mark as importing in DB
             await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true, import_progress: 0 })
 
-            const tracks = await fetchSpotifyData(importUrl, (value) => {
+            const result = await fetchSpotifyData(importUrl, (value) => {
                 const clamped = Math.min(100, Math.max(0, Math.round(value)))
                 setImportProgress(clamped)
                 const shouldUpdate = clamped === 100 || clamped - lastProgressRef.current >= 3
@@ -211,7 +214,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                     void update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { import_progress: clamped })
                 }
             })
-            await addSongsToRoom(roomCode, profile.id, tracks)
+            await addSongsToRoom(roomCode, profile.id, result.tracks)
+            if (result.failed.length > 0) setFailedTracks(result.failed)
             setImportUrl('')
 
             // Auto-Ready & Finished Importing
@@ -251,7 +255,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
             setImportProgress(0)
             lastProgressRef.current = 0
             await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true, import_progress: 0 })
-            const tracks = await fetchChartTracks(chartKey, (value) => {
+            const result = await fetchChartTracks(chartKey, (value) => {
                 const clamped = Math.min(100, Math.max(0, Math.round(value)))
                 setImportProgress(clamped)
                 const shouldUpdate = clamped === 100 || clamped - lastProgressRef.current >= 3
@@ -260,7 +264,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                     void update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { import_progress: clamped })
                 }
             })
-            await addSongsToRoom(roomCode, profile.id, tracks)
+            await addSongsToRoom(roomCode, profile.id, result.tracks)
+            if (result.failed.length > 0) setFailedTracks(result.failed)
             await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_ready: true, is_importing: false, import_progress: 100 })
         } catch (error: any) {
             console.error(error)
@@ -336,12 +341,13 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     }
 
     const modes = [
-        { id: 'normal', icon: Music, label: 'Normal' },
-        { id: 'rapid', icon: Zap, label: 'Rapid' },
-        { id: 'artist_only', icon: Mic2, label: 'Artist' },
-        { id: 'song_only', icon: Disc, label: 'Song' },
-        { id: 'lyrics_only', icon: FileText, label: 'Lyrics' },
-        { id: 'guess_who', icon: HelpCircle, label: 'Guess Who' }
+        { id: 'normal', icon: Music, label: 'Guess That Tune' },
+        { id: 'rapid', icon: Zap, label: 'Quickdraw' },
+        { id: 'artist_only', icon: Mic2, label: 'Only Artist Name' },
+        { id: 'song_only', icon: Disc, label: 'Only Song Name' },
+        { id: 'lyrics_only', icon: FileText, label: 'Lyrics Mode' },
+        { id: 'guess_who', icon: HelpCircle, label: 'Who Got The Aux?' },
+        { id: 'who_sang_that', icon: Mic, label: 'Who Sang That?' }
     ]
 
     return (
@@ -463,8 +469,23 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                             background: 'rgba(46, 242, 160, 0.12)', border: '1px solid rgba(46, 242, 160, 0.25)',
                             borderRadius: '8px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', color: 'var(--primary)'
                         }}>
-                            <CheckCircle size={24} />
-                            <div style={{ fontWeight: 600 }}>Playlist Imported ({mySongs.length} songs)</div>
+                            <CheckCircle size={24} style={{ flexShrink: 0 }} />
+                            <div style={{ fontWeight: 600, flex: 1 }}>Playlist Imported ({mySongs.length} songs)</div>
+                            {failedTracks.length > 0 && (
+                                <button
+                                    onClick={() => setShowFailedModal(true)}
+                                    title={`${failedTracks.length} songs couldn't be imported`}
+                                    style={{
+                                        background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                                        borderRadius: '8px', padding: '6px 10px',
+                                        display: 'flex', alignItems: 'center', gap: '6px',
+                                        cursor: 'pointer', color: '#ef4444', fontSize: '0.8rem', fontWeight: 600, flexShrink: 0,
+                                    }}
+                                >
+                                    <AlertTriangle size={16} />
+                                    {failedTracks.length}
+                                </button>
+                            )}
                         </div>
                     ) : (
                         <div style={{ display: 'flex', gap: '12px' }}>
@@ -530,14 +551,14 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                 {/* GAME MODES */}
                 <div>
                     <label style={{ display: 'block', marginBottom: '12px', fontWeight: 600 }}>Game Mode</label>
-                    <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '8px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
                         {modes.map(mode => (
                             <button
                                 key={mode.id}
                                 onClick={() => updateSettings({ mode: mode.id as any })}
                                 disabled={!isHost}
                                 style={{
-                                    flex: '1', minWidth: '80px', padding: '12px 8px', borderRadius: '12px',
+                                    padding: '12px 8px', borderRadius: '12px',
                                     background: settings.mode === mode.id ? 'var(--primary)' : 'rgba(255,255,255,0.04)',
                                     color: settings.mode === mode.id ? '#04110b' : 'var(--text-muted)',
                                     border: '1px solid', borderColor: settings.mode === mode.id ? 'var(--primary)' : 'rgba(255,255,255,0.1)',
@@ -579,6 +600,29 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                         disabled={!isHost}
                         style={{ width: '100%', accentColor: 'var(--primary)' }}
                     />
+                </div>
+
+                {/* NO DUPLICATES TOGGLE */}
+                <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    cursor: isHost ? 'pointer' : 'default',
+                    opacity: isHost ? 1 : 0.5
+                }}
+                    onClick={() => isHost && updateSettings({ no_duplicates: !settings.no_duplicates })}
+                >
+                    <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>No Duplicates</span>
+                    <div style={{
+                        width: '36px', height: '20px', borderRadius: '10px', position: 'relative', flexShrink: 0,
+                        background: settings.no_duplicates ? 'var(--primary)' : 'rgba(255,255,255,0.12)',
+                        transition: 'background 0.2s ease'
+                    }}>
+                        <div style={{
+                            position: 'absolute', top: '3px',
+                            left: settings.no_duplicates ? '19px' : '3px',
+                            width: '14px', height: '14px', borderRadius: '50%',
+                            background: 'white', transition: 'left 0.2s ease'
+                        }} />
+                    </div>
                 </div>
 
                 <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'center' }}>
@@ -628,6 +672,42 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
 
 
             </div>
+
+            {/* Failed Tracks Modal */}
+            {showFailedModal && failedTracks.length > 0 && (
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+                    backdropFilter: 'blur(8px)', zIndex: 100,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }} onClick={() => setShowFailedModal(false)}>
+                    <div className="glass-panel" style={{ padding: '24px', width: '100%', maxWidth: '440px', margin: '0 16px', maxHeight: '70vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#ef4444' }}>
+                                <AlertTriangle size={20} />
+                                <h3 style={{ fontWeight: 700, margin: 0 }}>{failedTracks.length} Songs Failed</h3>
+                            </div>
+                            <button onClick={() => setShowFailedModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '16px' }}>
+                            These songs couldn't be found, and so they were skipped.
+                        </p>
+                        <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {failedTracks.map((t, i) => (
+                                <div key={i} style={{
+                                    padding: '8px 12px', borderRadius: '8px',
+                                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)',
+                                    fontSize: '0.85rem',
+                                }}>
+                                    <span style={{ color: 'var(--text-main)' }}>{t.title || 'Unknown'}</span>
+                                    {t.artist && <span style={{ color: 'var(--text-muted)' }}> — {t.artist}</span>}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Delete Room Confirmation Modal */}
             {showDeleteConfirm && (

@@ -178,129 +178,116 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
             <div className="container" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div style={{ width: '100%', maxWidth: '1100px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(280px, 1fr))', gap: isMobile ? '16px' : '32px' }}>
 
-                    {/* Continue Game Card — only shown if active game detected */}
-                    {activeGame && (
-                        <button
-                            onClick={() => router.push(`/room/${activeGame.code}`)}
-                            className="glass-panel"
-                            style={{
-                                height: isMobile ? '140px' : '300px',
-                                display: 'flex',
-                                flexDirection: isMobile ? 'row' : 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: isMobile ? '16px' : '24px',
-                                padding: isMobile ? '0 20px' : '0',
-                                transition: 'var(--transition)',
-                                position: 'relative',
-                                overflow: 'hidden',
-                                borderColor: 'rgba(29, 185, 84, 0.4)',
-                                borderTopColor: 'rgba(29, 185, 84, 0.6)',
-                            }}
-                            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-8px)'; e.currentTarget.style.borderColor = 'var(--primary)' }}
-                            onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'rgba(29, 185, 84, 0.4)' }}
-                        >
-                            <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle, rgba(29,185,84,0.12) 0%, transparent 70%)', pointerEvents: 'none' }} />
-                            <div style={{
-                                width: isMobile ? '52px' : '80px', height: isMobile ? '52px' : '80px',
-                                borderRadius: '50%', background: 'rgba(29, 185, 84, 0.15)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                color: 'var(--primary)', flexShrink: 0
-                            }}>
-                                <ArrowRight size={isMobile ? 26 : 40} />
-                            </div>
-                            <div style={{ textAlign: isMobile ? 'left' : 'center', overflow: 'hidden' }}>
-                                <h2 style={{ fontSize: isMobile ? '1.3rem' : '1.8rem', marginBottom: '4px', color: 'var(--primary)' }}>Continue Game</h2>
-                                <p style={{ color: 'var(--text-muted)', fontSize: isMobile ? '0.85rem' : '1rem' }}>Room {activeGame.code} is still active</p>
-                            </div>
-                        </button>
-                    )}
-
-                    {/* Create Room Card */}
-                    <button
-                        onClick={handleCreateRoom}
-                        disabled={loading}
-                        className="glass-panel"
-                        style={{
-                            height: isMobile ? '140px' : '300px',
+                    {/* Shared card style */}
+                    {(() => {
+                        const cardStyle: React.CSSProperties = {
+                            height: isMobile ? '120px' : '260px',
                             display: 'flex',
                             flexDirection: isMobile ? 'row' : 'column',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            gap: isMobile ? '16px' : '24px',
-                            padding: isMobile ? '0 20px' : '0',
+                            gap: isMobile ? '16px' : '20px',
+                            padding: isMobile ? '0 24px' : '0',
                             transition: 'var(--transition)',
                             position: 'relative',
                             overflow: 'hidden',
-                            opacity: loading ? 0.7 : 1
-                        }}
-                        onMouseEnter={(e) => {
-                            e.currentTarget.style.transform = 'translateY(-8px)'
-                            e.currentTarget.style.borderColor = 'var(--primary)'
-                            e.currentTarget.querySelector('.icon-bg')!.setAttribute('style', 'opacity: 0.2; transform: scale(1.2); transition: all 0.5s;')
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.transform = 'translateY(0)'
-                            e.currentTarget.style.borderColor = 'var(--glass-border)'
-                            e.currentTarget.querySelector('.icon-bg')!.setAttribute('style', 'opacity: 0.05; transform: scale(1); transition: all 0.5s;')
-                        }}
-                    >
-                        <div className="icon-bg" style={{
-                            position: 'absolute', inset: 0,
-                            background: 'radial-gradient(circle, var(--primary) 0%, transparent 70%)',
-                            opacity: 0.05,
-                            pointerEvents: 'none'
-                        }} />
-
-                        <div style={{
-                            width: isMobile ? '52px' : '80px', height: isMobile ? '52px' : '80px', borderRadius: '50%', background: 'rgba(46, 242, 160, 0.12)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'var(--primary)', flexShrink: 0
-                        }}>
-                            <Plus size={isMobile ? 26 : 40} />
-                        </div>
-                        <div style={{ textAlign: isMobile ? 'left' : 'center', overflow: 'hidden' }}>
-                            <h2 style={{ fontSize: isMobile ? '1.3rem' : '1.8rem', marginBottom: '4px' }}>Create Room</h2>
-                            <p style={{ color: 'var(--text-muted)', fontSize: isMobile ? '0.85rem' : '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Host a game and invite friends</p>
-                        </div>
-                    </button>
-
-                    {/* Join Room Card */}
-                    <button
-                        onClick={() => setShowJoinModal(true)}
-                        disabled={loading}
-                        className="glass-panel"
-                        style={{
-                            height: isMobile ? '140px' : '300px',
+                        }
+                        const iconStyle = (bg: string): React.CSSProperties => ({
+                            width: isMobile ? '48px' : '72px',
+                            height: isMobile ? '48px' : '72px',
+                            borderRadius: '50%',
+                            background: bg,
                             display: 'flex',
-                            flexDirection: isMobile ? 'row' : 'column',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            gap: isMobile ? '16px' : '24px',
-                            padding: isMobile ? '0 20px' : '0',
-                            transition: 'var(--transition)'
-                        }}
-                        onMouseEnter={(e) => {
-                            e.currentTarget.style.transform = 'translateY(-8px)'
-                            e.currentTarget.style.borderColor = 'var(--secondary)'
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.transform = 'translateY(0)'
-                            e.currentTarget.style.borderColor = 'var(--glass-border)'
-                        }}
-                    >
-                        <div style={{
-                            width: isMobile ? '52px' : '80px', height: isMobile ? '52px' : '80px', borderRadius: '50%', background: 'rgba(60, 184, 255, 0.12)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'var(--secondary)', flexShrink: 0
-                        }}>
-                            <LogIn size={isMobile ? 26 : 40} />
-                        </div>
-                        <div style={{ textAlign: isMobile ? 'left' : 'center', overflow: 'hidden' }}>
-                            <h2 style={{ fontSize: isMobile ? '1.3rem' : '1.8rem', marginBottom: '4px' }}>Join Room</h2>
-                            <p style={{ color: 'var(--text-muted)', fontSize: isMobile ? '0.85rem' : '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Enter a code to join an existing game</p>
-                        </div>
-                    </button>
+                            flexShrink: 0,
+                        })
+                        const textStyle: React.CSSProperties = {
+                            textAlign: isMobile ? 'left' : 'center',
+                            flexShrink: 0,
+                        }
+                        const titleStyle: React.CSSProperties = {
+                            fontSize: isMobile ? '1.2rem' : '1.6rem',
+                            fontWeight: 700,
+                            margin: 0,
+                            lineHeight: 1.2,
+                        }
+                        const subtitleStyle: React.CSSProperties = {
+                            color: 'var(--text-muted)',
+                            fontSize: isMobile ? '0.82rem' : '0.95rem',
+                            margin: '5px 0 0 0',
+                            lineHeight: 1.3,
+                        }
+
+                        return (
+                            <>
+                                {/* Continue Game Card — only shown if active game detected */}
+                                {activeGame && (
+                                    <button
+                                        onClick={() => router.push(`/room/${activeGame.code}`)}
+                                        className="glass-panel"
+                                        style={{ ...cardStyle, borderColor: 'rgba(29, 185, 84, 0.4)', borderTopColor: 'rgba(29, 185, 84, 0.6)' }}
+                                        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-8px)'; e.currentTarget.style.borderColor = 'var(--primary)' }}
+                                        onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'rgba(29, 185, 84, 0.4)' }}
+                                    >
+                                        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle, rgba(29,185,84,0.12) 0%, transparent 70%)', pointerEvents: 'none' }} />
+                                        <div style={iconStyle('rgba(29, 185, 84, 0.15)')}>
+                                            <ArrowRight size={isMobile ? 24 : 36} color="var(--primary)" />
+                                        </div>
+                                        <div style={textStyle}>
+                                            <h2 style={{ ...titleStyle, color: 'var(--primary)' }}>Continue Game</h2>
+                                            <p style={subtitleStyle}>Room {activeGame.code} is still active</p>
+                                        </div>
+                                    </button>
+                                )}
+
+                                {/* Create Room Card */}
+                                <button
+                                    onClick={handleCreateRoom}
+                                    disabled={loading}
+                                    className="glass-panel"
+                                    style={{ ...cardStyle, opacity: loading ? 0.7 : 1 }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.transform = 'translateY(-8px)'
+                                        e.currentTarget.style.borderColor = 'var(--primary)'
+                                        e.currentTarget.querySelector('.icon-bg')!.setAttribute('style', 'opacity: 0.18; transform: scale(1.2); transition: all 0.5s;')
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.transform = 'translateY(0)'
+                                        e.currentTarget.style.borderColor = 'var(--glass-border)'
+                                        e.currentTarget.querySelector('.icon-bg')!.setAttribute('style', 'opacity: 0.05; transform: scale(1); transition: all 0.5s;')
+                                    }}
+                                >
+                                    <div className="icon-bg" style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle, var(--primary) 0%, transparent 70%)', opacity: 0.05, pointerEvents: 'none' }} />
+                                    <div style={iconStyle('rgba(46, 242, 160, 0.12)')}>
+                                        <Plus size={isMobile ? 24 : 36} color="var(--primary)" />
+                                    </div>
+                                    <div style={textStyle}>
+                                        <h2 style={titleStyle}>Create Room</h2>
+                                        <p style={subtitleStyle}>Host a game and invite friends</p>
+                                    </div>
+                                </button>
+
+                                {/* Join Room Card */}
+                                <button
+                                    onClick={() => setShowJoinModal(true)}
+                                    disabled={loading}
+                                    className="glass-panel"
+                                    style={cardStyle}
+                                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-8px)'; e.currentTarget.style.borderColor = 'var(--secondary)' }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--glass-border)' }}
+                                >
+                                    <div style={iconStyle('rgba(60, 184, 255, 0.12)')}>
+                                        <LogIn size={isMobile ? 24 : 36} color="var(--secondary)" />
+                                    </div>
+                                    <div style={textStyle}>
+                                        <h2 style={titleStyle}>Join Room</h2>
+                                        <p style={subtitleStyle}>Enter a code to join a room</p>
+                                    </div>
+                                </button>
+                            </>
+                        )
+                    })()}
 
 
 
