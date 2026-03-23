@@ -5,6 +5,7 @@ import { calculateScore } from '@/lib/scoring'
 import { GameState, SongItem } from '@/lib/game-logic'
 import { fetchLyrics } from '@/lib/lyrics'
 import { resolvePlaylist } from '@/lib/deezer'
+import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
 
 export async function POST(request: Request) {
     try {
@@ -367,6 +368,55 @@ export async function POST(request: Request) {
                 }
             } catch (e) {
                 console.error('Lyrics JIT fetch error', e)
+            }
+        }
+
+        if (settings?.mode === 'who_sang_that') {
+            try {
+                const artistPool = [...new Set(allSongs.map(song => song.artist_name).filter(Boolean))]
+
+                const ensureWhoSangThatExtras = async (song: SongItem, index?: number) => {
+                    const extrasRef = ref(db, `rooms/${roomCode}/who_sang_that_extras/${song.id}`)
+                    const extrasSnap = await get(extrasRef)
+                    if (extrasSnap.exists()) return
+
+                    const pendingLyricsPath = `rooms/${roomCode}/lyrics_cache/${song.id}`
+                    const cachedLyrics = typeof updates[pendingLyricsPath] === 'string'
+                        ? updates[pendingLyricsPath] as string
+                        : typeof roomData.lyrics_cache?.[song.id] === 'string'
+                            ? roomData.lyrics_cache[song.id]
+                            : null
+
+                    const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cachedLyrics)
+
+                    if (!lyricsText && index !== undefined) {
+                        const replacement = await findReplacementWithLyrics()
+                        if (replacement) {
+                            applySongAtIndex(index, replacement.song)
+                            updates[`rooms/${roomCode}/lyrics_cache/${replacement.song.id}`] = replacement.lyrics
+
+                            const replacementExtra = await buildWhoSangThatExtra(replacement.song, artistPool, replacement.lyrics)
+                            updates[`rooms/${roomCode}/who_sang_that_extras/${replacement.song.id}`] = replacementExtra.extra
+                            return
+                        }
+                    }
+
+                    updates[`rooms/${roomCode}/who_sang_that_extras/${song.id}`] = extra
+
+                    if (lyricsText && !cachedLyrics) {
+                        updates[pendingLyricsPath] = lyricsText
+                    }
+                }
+
+                await ensureWhoSangThatExtras(fullSong)
+
+                const nextRoundIndex = roundIndex + 1
+                const nextSecretSnap = await get(ref(db, `room_secrets/${roomCode}/${nextRoundIndex}`))
+                if (nextSecretSnap.exists()) {
+                    await ensureWhoSangThatExtras(nextSecretSnap.val() as SongItem, nextRoundIndex)
+                }
+            } catch (e) {
+                console.error('Who Sang That extras fetch error', e)
             }
         }
 

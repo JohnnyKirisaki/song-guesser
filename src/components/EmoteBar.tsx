@@ -15,6 +15,7 @@ type Reaction = {
 export default function EmoteBar({ roomCode }: { roomCode: string }) {
     const [emotes, setEmotes] = useState<string[]>([])
     const [reactions, setReactions] = useState<Reaction[]>([])
+    const [tappedEmote, setTappedEmote] = useState<string | null>(null)
     const lastAddAtRef = useRef(0)
     const [isMobile, setIsMobile] = useState(false)
     const [collapsed, setCollapsed] = useState(false)
@@ -43,32 +44,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
             .catch(err => console.error('[EmoteBar] Failed to load emotes:', err))
     }, [roomCode])
 
-    useEffect(() => {
-        if (!roomCode) return
-
-        const reactionsRef = ref(db, `rooms/${roomCode}/reactions`)
-        const startTime = Date.now()
-        console.log('[EmoteBar] Subscribing to reactions at', startTime)
-
-        // Listen for new reactions added to the room
-        const unsubscribe = onChildAdded(reactionsRef, (snapshot) => {
-            const data = snapshot.val()
-            // console.log('[EmoteBar] Child added:', snapshot.key, data)
-
-            // Only show reactions sent AFTER we joined/loaded
-            // We allow a small 1s buffer for clock skew
-            if (data && data.timestamp && data.timestamp > (startTime - 1000)) {
-                addReaction(data.src)
-            }
-        })
-
-        return () => {
-            console.log('[EmoteBar] Unsubscribing from reactions')
-            unsubscribe()
-        }
-    }, [roomCode])
-
-    const addReaction = (src: string) => {
+    function addReaction(src: string) {
         const now = Date.now()
         if (now - lastAddAtRef.current < MIN_REACTION_INTERVAL_MS) return
         lastAddAtRef.current = now
@@ -91,8 +67,32 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
         }, 2000)
     }
 
+    useEffect(() => {
+        if (!roomCode) return
+
+        const reactionsRef = ref(db, `rooms/${roomCode}/reactions`)
+        const startTime = Date.now()
+        console.log('[EmoteBar] Subscribing to reactions at', startTime)
+
+        const unsubscribe = onChildAdded(reactionsRef, (snapshot) => {
+            const data = snapshot.val()
+            if (data && typeof data.timestamp === 'number' && data.timestamp > (startTime - 1000)) {
+                addReaction(data.src)
+            }
+        })
+
+        return () => {
+            console.log('[EmoteBar] Unsubscribing from reactions')
+            unsubscribe()
+        }
+    }, [roomCode])
+
     const sendEmote = async (src: string) => {
         console.log('[EmoteBar] Sending emote:', src)
+        setTappedEmote(src)
+        setTimeout(() => {
+            setTappedEmote(current => current === src ? null : current)
+        }, 220)
         // Show locally instantly for responsiveness
         addReaction(src)
 
@@ -100,7 +100,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
             const reactionsRef = ref(db, `rooms/${roomCode}/reactions`)
             await push(reactionsRef, {
                 src,
-                timestamp: Date.now() // Simple client timestamp for filtering
+                timestamp: serverTimestamp()
             })
         } catch (err) {
             console.error('[EmoteBar] Failed to push emote:', err)
@@ -146,11 +146,8 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
                             <button
                                 key={src}
                                 onClick={() => sendEmote(src)}
-                                style={{
-                                    background: 'transparent', border: 'none',
-                                    cursor: 'pointer', transition: 'transform 0.1s',
-                                    padding: '2px', flexShrink: 0,
-                                }}
+                                className={`emote-pill-btn${tappedEmote === src ? ' is-tapped' : ''}`}
+                                style={{ transition: 'transform 0.1s' }}
                                 onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.2)'}
                                 onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
                             >

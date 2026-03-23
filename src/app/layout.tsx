@@ -4,6 +4,7 @@ import { UserProvider } from '@/context/UserContext'
 import { VolumeProvider } from '@/context/VolumeContext'
 import VolumeSlider from '@/components/VolumeSlider'
 import IOSDetector from '@/components/IOSDetector'
+import RouteTransition from '@/components/RouteTransition'
 
 export const metadata: Metadata = {
   title: 'BeatBattle',
@@ -29,7 +30,7 @@ export default function RootLayout({
         <IOSDetector />
         <UserProvider>
           <VolumeProvider>
-            {children}
+            <RouteTransition>{children}</RouteTransition>
             <VolumeSlider />
             <div className="noise-overlay" />
           </VolumeProvider>

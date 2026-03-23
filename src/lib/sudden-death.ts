@@ -43,6 +43,26 @@ async function resolvePreviewViaApi(song: SongItem): Promise<{ previewUrl: strin
     }
 }
 
+async function ensureWhoSangThatExtrasViaApi(roomCode: string, roundIndices: number[]): Promise<void> {
+    const uniqueIndices = [...new Set(roundIndices.filter(index => Number.isInteger(index) && index >= 0))]
+    if (uniqueIndices.length === 0) return
+
+    try {
+        const res = await fetch('/api/game/who-sang-that-extras', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomCode, roundIndices: uniqueIndices })
+        })
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}))
+            console.warn(`[SuddenDeath] Who Sang That extras prefetch failed (${res.status}): ${data?.error || 'unknown'}`)
+        }
+    } catch (e) {
+        console.error('[SuddenDeath] Who Sang That extras fetch error', e)
+    }
+}
+
 async function pickSongsWithLyrics(
     roomCode: string,
     candidates: SongItem[],
@@ -194,7 +214,9 @@ export async function initiateSuddenDeath(
     // We do lyrics fetching here if needed
     setTimeout(async () => {
         // CHECK LYRICS (Client-Side Fetch via API)
-        if (roomData.settings && roomData.settings.mode === 'lyrics_only') {
+        const requiresLyrics = roomData.settings?.mode === 'lyrics_only' || roomData.settings?.mode === 'who_sang_that'
+
+        if (requiresLyrics) {
             console.log('[SuddenDeath] Checking lyrics for new playlist...')
 
             // Prefetch the first chunk to avoid repeated fetches each round.
@@ -272,6 +294,13 @@ export async function initiateSuddenDeath(
             if (Object.keys(replacementUpdates).length > 0) {
                 await safeUpdate(ref(db), replacementUpdates)
             }
+        }
+
+        if (roomData.settings?.mode === 'who_sang_that') {
+            await ensureWhoSangThatExtrasViaApi(
+                roomCode,
+                Array.from({ length: Math.min(5, suddenDeathPlaylist.length) }, (_, i) => startIndex + i)
+            )
         }
 
         await safeUpdate(ref(db, `rooms/${roomCode}/game_state`), {
@@ -374,7 +403,9 @@ export async function fetchMoreSuddenDeathSongs(
         newSongs = [...newSongs, ...extras]
     }
 
-    if (roomData.settings && roomData.settings.mode === 'lyrics_only') {
+    const requiresLyrics = roomData.settings?.mode === 'lyrics_only' || roomData.settings?.mode === 'who_sang_that'
+
+    if (requiresLyrics) {
         const pickedIds = new Set(newSongs.map(s => s.id))
         const remainingPool = [
             ...tiedPlayerSongs.filter(s => !pickedIds.has(s.id)),
@@ -426,6 +457,13 @@ export async function fetchMoreSuddenDeathSongs(
     updates[`rooms/${roomCode}/game_state/sudden_death_round_count`] = (currentGameState.sudden_death_round_count || 0) + newSongs.length
 
     await safeUpdate(ref(db), updates)
+
+    if (roomData.settings?.mode === 'who_sang_that') {
+        await ensureWhoSangThatExtrasViaApi(
+            roomCode,
+            Array.from({ length: newSongs.length }, (_, i) => startIndex + i)
+        )
+    }
 
     return true
 }

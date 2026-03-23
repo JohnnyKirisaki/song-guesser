@@ -20,6 +20,7 @@ import { initiateSuddenDeath, fetchMoreSuddenDeathSongs, endSuddenDeath } from '
 import UserPopover from '@/components/UserPopover'
 import GuessWhoButton from '@/components/GuessWhoButton'
 import { useIOSAudioUnlock } from '@/hooks/useIOSAudioUnlock'
+import AnimatedNumber from '@/components/AnimatedNumber'
 
 type Player = {
     id: string
@@ -211,6 +212,7 @@ export default function GamePage() {
     const prevScoresRef = useRef<Record<string, number>>({})
     const prevRanksRef = useRef<Record<string, number>>({})
     const currentSongRef = useRef<SongItem | undefined>(undefined)
+    const whoSangThatHydrationRef = useRef<Record<string, boolean>>({})
 
     // Load room songs once for autocomplete
     useEffect(() => {
@@ -748,6 +750,38 @@ export default function GamePage() {
         })
         return () => unsub()
     }, [currentSong?.id, roomSettings?.mode, code])
+
+    useEffect(() => {
+        const isWhoSangThatMode = roomSettings?.mode === 'who_sang_that'
+        const hasOptions = Array.isArray(whoSangThatData?.options) && whoSangThatData.options.length > 0
+
+        if (!isHost || !isWhoSangThatMode || !currentSong?.id || gameState?.current_round_index === undefined || hasOptions) {
+            return
+        }
+
+        if (whoSangThatHydrationRef.current[currentSong.id]) {
+            return
+        }
+
+        whoSangThatHydrationRef.current[currentSong.id] = true
+
+        void fetch('/api/game/who-sang-that-extras', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                roomCode: code,
+                roundIndices: [gameState.current_round_index]
+            })
+        }).then(async (res) => {
+            if (res.ok) return
+            const data = await res.json().catch(() => ({}))
+            delete whoSangThatHydrationRef.current[currentSong.id]
+            console.warn(`[WhoSangThat] Extras hydrate failed (${res.status}): ${data?.error || 'unknown'}`)
+        }).catch((e) => {
+            delete whoSangThatHydrationRef.current[currentSong.id]
+            console.warn('[WhoSangThat] Extras hydrate request failed', e)
+        })
+    }, [isHost, roomSettings?.mode, currentSong?.id, gameState?.current_round_index, whoSangThatData?.options?.length, code])
 
     // --------------------------------------------------------------------------------
     // 3. COLOR EXTRACTION (Dynamic Backgrounds)
@@ -1503,6 +1537,34 @@ export default function GamePage() {
     // 5. RENDER
     // --------------------------------------------------------------------------------
 
+    const flareIsAudioStale = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
+    const flareIsWaitingForAudio = Boolean(
+        gameState &&
+        !isLyricsOnlyTemp &&
+        !isWhoSangThatTemp &&
+        gameState.phase === 'playing' &&
+        (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || flareIsAudioStale || !gameState.round_start_time)
+    )
+    const flareIsGameStartWaiting = Boolean(flareIsWaitingForAudio && (
+        gameState?.current_round_index === 0 ||
+        (gameState?.is_sudden_death && gameState?.current_round_index === gameState?.sudden_death_start_index)
+    ))
+    const flareIsReveal = Boolean(gameState?.phase === 'reveal' || (flareIsWaitingForAudio && !flareIsGameStartWaiting))
+
+    useEffect(() => {
+        document.documentElement.style.setProperty('--flare-body-opacity', flareIsReveal ? '0.34' : '0.18')
+        document.documentElement.style.setProperty('--flare-center-opacity', flareIsReveal ? '0.3' : '0.14')
+        document.documentElement.style.setProperty('--flare-reveal-pulse-state', flareIsReveal ? 'running' : 'paused')
+        document.documentElement.style.setProperty('--flare-drift-speed', flareIsReveal ? '30s' : '54s')
+
+        return () => {
+            document.documentElement.style.setProperty('--flare-body-opacity', '0.22')
+            document.documentElement.style.setProperty('--flare-center-opacity', '0.18')
+            document.documentElement.style.setProperty('--flare-reveal-pulse-state', 'paused')
+            document.documentElement.style.setProperty('--flare-drift-speed', '54s')
+        }
+    }, [flareIsReveal])
+
     // A. Finished -> Podium
     if (status === 'finished') {
         localStorage.removeItem('bb_active_game')
@@ -1617,9 +1679,23 @@ export default function GamePage() {
     const displayPlayers = (isSuddenDeath && duelingIds.length > 0)
         ? players.filter(p => duelingIds.includes(p.id))
         : players
+    const isUrgentTimer = gameState.phase === 'playing' && !isWaitingForAudio && timeLeft > 0 && timeLeft <= 5
+    const modeLabel = ({
+        normal: 'Guess That Tune',
+        rapid: 'Quickdraw',
+        artist_only: 'Artist Only',
+        song_only: 'Song Only',
+        lyrics_only: 'Lyrics Mode',
+        guess_who: 'Who Got The Aux?',
+        who_sang_that: 'Who Sang That?',
+    } as Record<string, string>)[mode] || 'BeatBattle'
+    const sortedDisplayPlayers = [...displayPlayers].sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score
+        return (b.sudden_death_score || 0) - (a.sudden_death_score || 0)
+    })
 
     return (
-        <div className="game-shell" style={{ width: '100%', margin: '0 auto', paddingBottom: '28px', minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
+        <div className={`game-shell ${isReveal ? 'phase-reveal' : 'phase-playing'}${isUrgentTimer ? ' time-urgent' : ''}${isWhoSangThat ? ' mode-who-sang-that' : ''}`} style={{ width: '100%', margin: '0 auto', paddingBottom: '28px', minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
             <style jsx>{`
                 .vinyl-container {
                     width: 300px;
@@ -1747,44 +1823,45 @@ export default function GamePage() {
             `}</style>
             {/* Top HUD */}
             <div className="game-hud">
-                <div className="hud-row">
-                    <div className="round-pill">
+                <div className="hud-bar">
+                    <div className="hud-chip hud-chip--round">
+                        <span className="hud-chip__eyebrow">Round</span>
+                        <span className="hud-chip__value">{displayRound} / {roomSettings?.rounds}</span>
                         {gameState.is_sudden_death && <span className="round-tag">Sudden Death</span>}
                         {isBulletRound && <span className="round-tag" style={{ background: '#ff4444', color: 'white', borderColor: '#ff4444' }}>Bullet Round</span>}
-                        <span>Round {displayRound} / {roomSettings?.rounds}</span>
                     </div>
-                    {/* Inject Loading Indicator during Reveal only */}
-                    {(showRevealLyricsFetch && isLyricsOnly && isRealReveal) && (
-                        <div className="reveal-loading-pill" style={{
-                            background: 'rgba(255, 215, 0, 0.2)', color: '#FFD700',
-                            border: '1px solid rgba(255, 215, 0, 0.4)', padding: '4px 12px',
-                            borderRadius: '99px', fontSize: '0.8rem', fontWeight: 700,
-                            display: 'flex', alignItems: 'center', gap: '8px'
-                        }}>
-                            <div className="animate-spin" style={{ width: '12px', height: '12px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
-                            FETCHING NEW LYRICS...
-                        </div>
-                    )}
 
-                    {/* Audio Loading Indicator */}
-                    {isWaitingForAudio && (
-                        <div className="reveal-loading-pill" style={{
-                            background: 'rgba(30, 215, 96, 0.2)', color: '#1ed760',
-                            border: '1px solid rgba(30, 215, 96, 0.4)', padding: '4px 12px',
-                            borderRadius: '99px', fontSize: '0.8rem', fontWeight: 700,
-                            display: 'flex', alignItems: 'center', gap: '8px'
-                        }}>
-                            <div className="animate-spin" style={{ width: '12px', height: '12px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
-                            LOADING NEXT SONG...
+                    <div className="hud-center">
+                        <div className="hud-mode-pill">{modeLabel}</div>
+                        <div className="hud-progress">
+                            <ProgressBar current={timeSynced ? Math.max(0, timeLeft) : 0} total={roomSettings?.time || 15} />
                         </div>
-                    )}
+                        <div className="hud-status-row">
+                            {(showRevealLyricsFetch && isLyricsOnly && isRealReveal) && (
+                                <div className="reveal-loading-pill hud-status-pill" style={{
+                                    background: 'rgba(255, 215, 0, 0.2)', color: '#FFD700',
+                                    border: '1px solid rgba(255, 215, 0, 0.4)'
+                                }}>
+                                    <div className="animate-spin" style={{ width: '12px', height: '12px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                                    Fetching new lyrics
+                                </div>
+                            )}
+
+                            {isWaitingForAudio && (
+                                <div className="reveal-loading-pill hud-status-pill" style={{
+                                    background: 'rgba(30, 215, 96, 0.2)', color: '#1ed760',
+                                    border: '1px solid rgba(30, 215, 96, 0.4)'
+                                }}>
+                                    <div className="animate-spin" style={{ width: '12px', height: '12px', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                                    Loading next song
+                                </div>
+                            )}
+                        </div>
+                    </div>
 
                     <div className={`timer-pill ${gameState.phase === 'playing' && !isWaitingForAudio && timeLeft <= 3 ? 'countdown-pulse' : ''}`}>
                         {timeSynced ? Math.ceil(Math.max(0, timeLeft)) : '...'}
                     </div>
-                </div>
-                <div className="hud-progress">
-                    <ProgressBar current={timeSynced ? Math.max(0, timeLeft) : 0} total={roomSettings?.time || 15} />
                 </div>
             </div >
 
@@ -1885,7 +1962,7 @@ export default function GamePage() {
                                         The artist was...
                                     </div>
                                     {whoSangThatData?.options && (
-                                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                                        <div className="who-sang-that-options who-sang-that-options--reveal" style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
                                             {whoSangThatData.options.map((opt, i) => {
                                                 const isCorrect = opt.name.toLowerCase().trim() === effectiveSong.artist_name?.toLowerCase().trim()
                                                 const myGuess = players.find(pl => pl.id === profile.id)?.last_guess?.title
@@ -2041,7 +2118,7 @@ export default function GamePage() {
 
                             {/* Who Sang That mode — lyrics excerpt + 2 artist options */}
                             {isWhoSangThat && (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', width: '100%' }}>
+                                <div className="who-sang-that-stage" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', width: '100%' }}>
                                     {/* Lyrics excerpt */}
                                     <div className="lyrics-panel" style={{ textAlign: 'center', fontStyle: 'italic', lineHeight: 1.7 }}>
                                         {whoSangThatData?.excerpt?.length
@@ -2051,7 +2128,7 @@ export default function GamePage() {
                                     </div>
                                     {/* Artist option buttons */}
                                     {whoSangThatData?.options && (
-                                        <div style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'nowrap', width: '100%', maxWidth: '420px' }}>
+                                        <div className="who-sang-that-options" style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'nowrap', width: '100%', maxWidth: '420px' }}>
                                             {whoSangThatData.options.map((opt, i) => (
                                                 <GuessWhoButton
                                                     key={i}
@@ -2203,14 +2280,10 @@ export default function GamePage() {
                 return (
             <div className={`game-leaderboard${isGridMode ? ' grid-mode' : ''}${isCompact ? ' compact' : ''}`}>
                 <div className="leaderboard-title">Leaderboard</div>
-                {[...displayPlayers].sort((a, b) => {
-                    // Primary: Main Score
-                    if (b.score !== a.score) return b.score - a.score
-                    // Secondary: Sudden Death Score
-                    return (b.sudden_death_score || 0) - (a.sudden_death_score || 0)
-                }).map(p => {
+                {sortedDisplayPlayers.map((p, index) => {
                     const isSubmitter = p.has_submitted
                     const isMe = p.id === profile.id
+                    const rank = index + 1
 
                     // Check if correct during reveal
                     let resultClass = ''
@@ -2225,18 +2298,19 @@ export default function GamePage() {
                         <div
                             key={p.id}
 
-                            className={`player-card ${isSubmitter ? 'submitted' : ''} ${resultClass} ${isMe ? 'me' : ''}`}
+                            className={`player-card ${isSubmitter ? 'submitted' : ''} ${resultClass} ${isMe ? 'me' : ''}${rank <= 3 ? ` rank-top rank-${rank}` : ''}`}
                             style={{ cursor: 'pointer' }}
                             onClick={(e) => openUserMenu(p, e)}
                             onContextMenu={(e) => openUserMenu(p, e)}
                         >
+                            <div className={`rank-badge${rank <= 3 ? ` rank-badge--${rank}` : ''}`}>#{rank}</div>
                             <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0 }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <div className="player-name" style={{ fontSize: '0.85rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</div>
                                 <div className="player-score" style={{ fontSize: '0.75rem', opacity: 0.7 }}>
                                     {gameState.is_sudden_death
-                                        ? `${p.sudden_death_score || 0} pts (SD)`
-                                        : `${p.score} pts`
+                                        ? <><AnimatedNumber value={p.sudden_death_score || 0} /> pts (SD)</>
+                                        : <><AnimatedNumber value={p.score} /> pts</>
                                     }
                                 </div>
                             </div>
@@ -2260,7 +2334,7 @@ export default function GamePage() {
 
             {/* Footer: Score & Emotes */}
             <div className="score-hud">
-                Score: <span className="text-primary">{totalScore}</span>
+                Score: <span className="text-primary"><AnimatedNumber value={totalScore} /></span>
             </div>
             {/* Audio Element Hidden */}
             <audio

@@ -33,11 +33,13 @@ export default function GuessWhoButton({ playerId, username, avatarUrl, onClick,
             className={`guess-who-btn${selected ? ' selected' : ''}`}
             style={selected ? { boxShadow: `0 0 0 2px ${glow}, 0 0 28px ${glowSoft}`, borderColor: glow } : {}}
         >
-            <img
-                src={avatarUrl}
-                alt={username}
-                className="guess-who-avatar"
-            />
+            <div className="guess-who-avatar-frame">
+                <img
+                    src={avatarUrl}
+                    alt={username}
+                    className="guess-who-avatar"
+                />
+            </div>
             <span
                 className="guess-who-name"
                 style={{

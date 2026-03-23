@@ -1,5 +1,5 @@
 import { useFriends } from '@/hooks/useFriends'
-import { User, LogIn, Sparkles, Check, X, Users, Loader2, Flame } from 'lucide-react'
+import { LogIn, Users, Loader2, Flame } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState, type MouseEvent } from 'react'
 import UserPopover from './UserPopover'
@@ -32,15 +32,24 @@ type FriendListProps = {
     minimal?: boolean
 }
 
+type FriendItem = {
+    id: string
+    username: string
+    avatar_url: string
+    is_online?: boolean
+    hosting?: { roomCode: string } | null
+    streak?: number
+}
+
 export default function FriendList({ currentUserId, minimal = false }: FriendListProps) {
-    const { friends, incomingRequests, loading, acceptFriendRequest, removeFriend } = useFriends() // removeFriend needed? maybe via popover
+    const { friends, loading } = useFriends()
     const router = useRouter()
 
     // For handling popover on friends
-    const [selectedUser, setSelectedUser] = useState<any>(null)
+    const [selectedUser, setSelectedUser] = useState<FriendItem | null>(null)
     const [menuAnchor, setMenuAnchor] = useState<{ x: number, y: number } | null>(null)
 
-    const openUserMenu = (user: any, event: MouseEvent) => {
+    const openUserMenu = (user: FriendItem, event: MouseEvent) => {
         event.preventDefault()
         event.stopPropagation()
         setSelectedUser(user)
@@ -95,8 +104,14 @@ export default function FriendList({ currentUserId, minimal = false }: FriendLis
             </div>
 
             {friends.length === 0 ? (
-                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', border: '1px dashed var(--glass-border-light)', borderRadius: '12px' }}>
-                    No friends yet. Play a game and click an avatar to add one!
+                <div className="empty-state-card">
+                    <div className="empty-state-icon">
+                        <Users size={26} />
+                    </div>
+                    <div className="empty-state-title">No friends yet</div>
+                    <div style={{ maxWidth: '240px', lineHeight: 1.55 }}>
+                        Play a game and click an avatar to start building your crew.
+                    </div>
                 </div>
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, overflowY: 'auto' }}>
