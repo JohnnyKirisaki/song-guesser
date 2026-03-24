@@ -13,6 +13,7 @@ export type SpotifyTrack = {
     cover_url: string
     preview_url: string | null
     album_name?: string | null
+    album_cover_url?: string | null
 }
 
 export type FailedTrack = { artist: string, title: string }
@@ -42,7 +43,8 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
                 spotify_artist_id: t.input?.spotifyArtistId || null,
                 cover_url: t.deezer.cover_url,
                 preview_url: t.deezer.preview_url ? t.deezer.preview_url.replace(/^http:\/\//i, 'https://') : null,
-                album_name: t.deezer.album_title || t.input?.album || null
+                album_name: t.input?.album || t.deezer.album_title || null,
+                album_cover_url: t.input?.albumCoverUrl || t.deezer.cover_url || null
             }))
 
         const failed = data.tracks
@@ -56,7 +58,7 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
     }
 }
 
-type TrackMeta = { artist: string, title: string, album?: string, year?: string, isrc?: string, spotifyArtistId?: string | null }
+type TrackMeta = { artist: string, title: string, album?: string, albumCoverUrl?: string | null, year?: string, isrc?: string, spotifyArtistId?: string | null }
 
 async function resolveViaServerBatched(
     metadata: TrackMeta[],
@@ -136,6 +138,7 @@ export async function fetchSpotifyData(
             artist: t.artist ?? '',
             title: t.name ?? '',
             album: t.album,
+            albumCoverUrl: t.albumCoverUrl ?? null,
             year: t.year,
             isrc: t.isrc,
             spotifyArtistId: t.artistId ?? null
@@ -210,6 +213,7 @@ export async function addSongsToRoom(roomCode: string, userId: string, tracks: S
             artist_name: t.artist,
             track_name: t.name,
             album_name: t.album_name || null,
+            album_cover_url: t.album_cover_url || null,
             cover_url: t.cover_url || null,
             preview_url: t.preview_url,
             picked_by_user_id: userId

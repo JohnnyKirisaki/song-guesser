@@ -44,6 +44,7 @@ export type SongItem = {
     artist_name: string
     track_name: string
     album_name?: string | null
+    album_cover_url?: string | null
     cover_url: string
     preview_url: string | null
     picked_by_user_id: string

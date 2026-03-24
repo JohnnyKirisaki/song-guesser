@@ -40,7 +40,7 @@ export async function POST(request: Request) {
                 preview_url: isAlbumArt ? null : (song.preview_url || null),
                 artist_name: '???',
                 track_name: '???',
-                cover_url: isAlbumArt ? song.cover_url : '',
+                cover_url: isAlbumArt ? (song.album_cover_url || song.cover_url) : '',
                 spotify_uri: song.spotify_uri || ''
             })
         })

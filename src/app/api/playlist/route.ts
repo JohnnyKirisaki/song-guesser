@@ -215,6 +215,7 @@ export async function POST(request: Request) {
                 artist: t.artists[0]?.name,
                 artistId: t.artists[0]?.id || null,
                 album: t.album?.name,
+                albumCoverUrl: t.album?.images?.[0]?.url || null,
                 year: t.album?.release_date?.split('-')[0],
                 isrc: t.external_ids?.isrc
             }

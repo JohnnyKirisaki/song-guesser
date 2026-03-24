@@ -276,14 +276,14 @@ export async function POST(request: Request) {
         updates[`rooms/${roomCode}/game_state/current_round_answer`] = {
             artist: fullSong.artist_name,
             title: fullSong.track_name,
-            cover_url: fullSong.cover_url,
+            cover_url: fullSong.album_cover_url || fullSong.cover_url,
             album_name: fullSong.album_name || null
         }
 
         // Backfill playlist item for history consistency
         updates[`rooms/${roomCode}/game_state/playlist/${roundIndex}/artist_name`] = fullSong.artist_name
         updates[`rooms/${roomCode}/game_state/playlist/${roundIndex}/track_name`] = fullSong.track_name
-        updates[`rooms/${roomCode}/game_state/playlist/${roundIndex}/cover_url`] = fullSong.cover_url
+        updates[`rooms/${roomCode}/game_state/playlist/${roundIndex}/cover_url`] = fullSong.album_cover_url || fullSong.cover_url
 
         // Phase Change
         updates[`rooms/${roomCode}/game_state/phase`] = 'reveal'

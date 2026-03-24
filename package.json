@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "clear-cache": "npx ts-node --esm scripts/clear-song-cache.ts"
+    "clear-cache": "npx ts-node --esm scripts/clear-song-cache.ts",
+    "backfill-album-art": "npx ts-node scripts/backfill-album-art-covers.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.94.0",
