@@ -186,8 +186,8 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                             flexDirection: isMobile ? 'row' : 'column',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            gap: isMobile ? '16px' : '20px',
-                            padding: isMobile ? '0 24px' : '0',
+                            gap: isMobile ? '16px' : '22px',
+                            padding: isMobile ? '0 24px' : '32px 28px',
                             transition: 'var(--transition)',
                             position: 'relative',
                             overflow: 'hidden',
@@ -203,19 +203,26 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                             flexShrink: 0,
                         })
                         const textStyle: React.CSSProperties = {
+                            width: '100%',
+                            maxWidth: isMobile ? 'none' : '240px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: isMobile ? 'flex-start' : 'center',
+                            justifyContent: 'flex-start',
                             textAlign: isMobile ? 'left' : 'center',
                             flexShrink: 0,
+                            minHeight: isMobile ? 'auto' : '78px',
                         }
                         const titleStyle: React.CSSProperties = {
                             fontSize: isMobile ? '1.2rem' : '1.6rem',
                             fontWeight: 700,
-                            margin: 0,
+                            margin: '0 0 8px 0',
                             lineHeight: 1.2,
                         }
                         const subtitleStyle: React.CSSProperties = {
                             color: 'var(--text-muted)',
                             fontSize: isMobile ? '0.82rem' : '0.95rem',
-                            margin: '5px 0 0 0',
+                            margin: 0,
                             lineHeight: 1.3,
                         }
 
