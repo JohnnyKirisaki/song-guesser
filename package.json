@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.94.0",
     "apify-client": "^2.22.0",
+    "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
     "color-thief-react": "^2.1.0",
     "firebase": "^12.9.0",
@@ -24,6 +25,7 @@
     "solenolyrics": "^5.0.0"
   },
   "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^20",
     "@types/pg": "^8.16.0",
     "@types/react": "^19",

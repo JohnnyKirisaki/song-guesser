@@ -3,17 +3,18 @@ export const SOUNDS = {
     wrong: '/sounds/wrong.mp3',
     tick: '/sounds/tick.mp3',
     reveal: '/sounds/reveal.mp3',
-    win: '/sounds/win.mp3'
+    win: '/sounds/win.mp3',
+    countdown_tick: '/sounds/countdown_tick.mp3',
+    sudden_death: '/sounds/sudden_death.mp3',
+    all_ready: '/sounds/all_ready.mp3'
 }
 
 class SoundManager {
-    private method: 'html5' | 'web-audio' = 'html5'
     private audioCache: Record<string, HTMLAudioElement> = {}
     private volume: number = 0.5
 
     constructor() {
         if (typeof window !== 'undefined') {
-            // Preload
             Object.values(SOUNDS).forEach(src => {
                 const audio = new Audio(src)
                 this.audioCache[src] = audio
@@ -33,12 +34,18 @@ class SoundManager {
         const src = SOUNDS[key]
         const audio = this.audioCache[src] || new Audio(src)
 
-        // Reset and play
         audio.currentTime = 0
         audio.volume = this.volume
-        audio.play().catch(e => {
-            // Ignored (user interaction usually required)
-        })
+        audio.play().catch(() => {})
+    }
+
+    stop(key: keyof typeof SOUNDS) {
+        const src = SOUNDS[key]
+        const audio = this.audioCache[src]
+        if (audio) {
+            audio.pause()
+            audio.currentTime = 0
+        }
     }
 }
 

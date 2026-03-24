@@ -94,7 +94,7 @@ export default function LobbyChat({ roomCode, userId, username, avatarUrl }: {
                     </div>
                 )}
                 {messages.map(msg => (
-                    <div key={msg.id} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <div key={msg.id} className="chat-msg-enter" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <img
                             src={msg.avatar_url || 'https://via.placeholder.com/24'}
                             alt=""

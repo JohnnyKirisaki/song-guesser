@@ -918,6 +918,21 @@ select:focus {
     overflow: hidden;
 }
 
+/* Dynamic background flare intensity — body-level so pseudo-elements inherit */
+body.phase-reveal {
+    --flare-body-opacity: 0.34;
+    --flare-center-opacity: 0.32;
+    --flare-reveal-pulse-state: running;
+    --flare-drift-speed: 38s;
+}
+
+body.phase-playing {
+    --flare-body-opacity: 0.12;
+    --flare-center-opacity: 0.08;
+    --flare-reveal-pulse-state: paused;
+    --flare-drift-speed: 64s;
+}
+
 @media (max-width: 1400px) {
     .game-shell {
         padding-left: 220px;
@@ -1625,6 +1640,7 @@ select:focus {
 body::before,
 body::after {
     opacity: var(--flare-body-opacity);
+    transition: opacity 1.6s ease-in-out;
     animation: float var(--flare-drift-speed) ease-in-out infinite alternate,
                flareIntensityPulse 4.2s ease-in-out infinite;
     animation-play-state: running, var(--flare-reveal-pulse-state);
@@ -1636,6 +1652,7 @@ body::after {
 
 .game-shell::before {
     opacity: var(--flare-center-opacity);
+    transition: opacity 1.6s ease-in-out;
     animation: pulseFlare 38s ease-in-out infinite alternate,
                flareIntensityPulse 3.4s ease-in-out infinite;
     animation-play-state: running, var(--flare-reveal-pulse-state);
@@ -1910,4 +1927,42 @@ button:not(:disabled):active {
         height: 28px;
         font-size: 0.64rem;
     }
+}
+
+/* ── 3b. Podium rise animation ──────────────────────────────── */
+@keyframes podiumRise {
+    from {
+        transform: scaleY(0);
+        opacity: 0;
+    }
+    to {
+        transform: scaleY(1);
+        opacity: 1;
+    }
+}
+
+.podium-card {
+    transform-origin: bottom center;
+    animation: podiumRise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── 3c. Chat message entrance ──────────────────────────────── */
+@keyframes chatMsgIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.chat-msg-enter {
+    animation: chatMsgIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── 3d. Leaderboard rank shift ─────────────────────────────── */
+.player-card {
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), background 0.28s, border-color 0.28s, box-shadow 0.28s;
 }

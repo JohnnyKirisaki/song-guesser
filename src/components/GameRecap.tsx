@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Clock, Zap, Music } from 'lucide-react'
+import { Clock, Zap, Music, UserPlus } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { soundManager } from '@/lib/sounds'
+import confetti from 'canvas-confetti'
+import { useFriends } from '@/hooks/useFriends'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
 import { ref, get, remove, set, onValue, update } from 'firebase/database'
@@ -52,6 +54,7 @@ type StatItem = {
 export default function GameRecap({ roomCode, players }: { roomCode: string, players: Player[] }) {
     const router = useRouter()
     const { profile, updateProfile } = useUser()
+    const { getFriendStatus, sendFriendRequest } = useFriends()
     const [stats, setStats] = useState<StatItem[]>([])
     const [loading, setLoading] = useState(true)
     const [winner, setWinner] = useState<Player | null>(null)
@@ -61,14 +64,6 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     const [popoverAnchor, setPopoverAnchor] = useState<{ x: number, y: number } | null>(null)
     const [nextRoomCode, setNextRoomCode] = useState<string | null>(null)
     const [creatingRoom, setCreatingRoom] = useState(false)
-
-    // Lock body scroll on desktop only — on mobile the recap can be taller than the screen
-    useEffect(() => {
-        if (window.innerWidth > 768) {
-            document.body.style.overflow = 'hidden'
-            return () => { document.body.style.overflow = '' }
-        }
-    }, [])
 
     // Listen for Play Again (Next Room)
     useEffect(() => {
@@ -139,6 +134,27 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
     useEffect(() => {
         soundManager.play('win')
+        // Fire confetti burst for the winner
+        const duration = 2000
+        const end = Date.now() + duration
+        const frame = () => {
+            confetti({
+                particleCount: 3,
+                angle: 60,
+                spread: 55,
+                origin: { x: 0, y: 0.7 },
+                colors: ['#FFD700', '#1DB954', '#60a5fa'],
+            })
+            confetti({
+                particleCount: 3,
+                angle: 120,
+                spread: 55,
+                origin: { x: 1, y: 0.7 },
+                colors: ['#FFD700', '#1DB954', '#60a5fa'],
+            })
+            if (Date.now() < end) requestAnimationFrame(frame)
+        }
+        frame()
     }, [])
 
     // Update streaks with all co-players
@@ -420,6 +436,30 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
         awardWin()
     }, [winner, profile, roomCode, updateProfile])
 
+    // Record head-to-head stats
+    useEffect(() => {
+        if (!winner || !profile || isDraw) return
+        const h2hKey = `h2h_recorded_${roomCode}`
+        if (typeof window !== 'undefined' && localStorage.getItem(h2hKey) === '1') return
+
+        const recordH2H = async () => {
+            const otherPlayers = players.filter(p => p.id !== winner.id)
+            for (const loser of otherPlayers) {
+                const key = [winner.id, loser.id].sort().join('_')
+                const h2hRef = ref(db, `h2h/${key}`)
+                const snap = await get(h2hRef)
+                const data = snap.val() || {}
+                const currentWins = data[winner.id] || 0
+                await update(h2hRef, { [winner.id]: currentWins + 1 })
+            }
+            if (typeof window !== 'undefined') {
+                localStorage.setItem(h2hKey, '1')
+            }
+        }
+
+        recordH2H().catch(() => {})
+    }, [winner, profile, isDraw, players, roomCode])
+
     // Cleanup: Delete room after game finishes (delay so players can view recap)
     useEffect(() => {
         const cleanupTimer = setTimeout(async () => {
@@ -447,9 +487,9 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     const podiumAvatarStyle = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' } as const
 
     return (
-        <div className="container flex-center" style={{ minHeight: '100vh', flexDirection: 'column', paddingTop: '24px', paddingBottom: '24px', gap: '0' }}>
+        <div className="container flex-center" style={{ minHeight: '100dvh', flexDirection: 'column', paddingTop: '16px', paddingBottom: '16px', gap: '0' }}>
             <h1 className="text-gradient" style={{ fontSize: 'clamp(1.8rem, 6vw, 3rem)', marginBottom: '4px' }}>Game Over</h1>
-            <p style={{ color: '#aaa', marginBottom: 'clamp(16px, 3vh, 32px)' }}>What a game! Here are the standings.</p>
+            <p style={{ color: '#aaa', marginBottom: 'clamp(10px, 2vh, 20px)' }}>What a game! Here are the standings.</p>
 
             {/* Podium / Draw */}
             {isDraw && drawPlayers.length > 1 ? (
@@ -471,69 +511,91 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     </div>
                 </div>
             ) : (
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '20px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: 'clamp(20px, 4vh, 48px)' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '16px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: 'clamp(14px, 2.8vh, 28px)' }}>
                     {winners[1] && (
-                        <div className="glass-panel animate-in" style={{ padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(220px, 40vw, 340px)', justifyContent: 'flex-end', animationDelay: '200ms', minWidth: '130px' }}>
+                        <div className="glass-panel podium-card" style={{ padding: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(200px, 34vw, 300px)', justifyContent: 'flex-end', animationDelay: '200ms', minWidth: '126px' }}>
                             <div
-                                style={{ width: 'clamp(72px, 14vw, 110px)', height: 'clamp(72px, 14vw, 110px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '8px', cursor: 'pointer' }}
+                                style={{ width: 'clamp(68px, 12vw, 100px)', height: 'clamp(68px, 12vw, 100px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '6px', cursor: 'pointer' }}
                                 onClick={(e) => handleAvatarClick(winners[1], e)}
                             >
                                 <img src={winners[1].avatar_url} style={podiumAvatarStyle} />
                             </div>
-                            <h2 style={{ marginBottom: '8px' }}>{winners[1].username}</h2>
-                            <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{winners[1].score} pts</div>
-                            <div style={{ marginTop: '12px', color: 'silver' }}>2nd</div>
+                            <h2 style={{ marginBottom: '6px' }}>{winners[1].username}</h2>
+                            <div style={{ fontSize: '1.35rem', fontWeight: 700 }}>{winners[1].score} pts</div>
+                            <div style={{ marginTop: '8px', color: 'silver' }}>2nd</div>
                         </div>
                     )}
 
                     {winners[0] && (
-                        <div className="glass-panel animate-in" style={{ padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(280px, 50vw, 460px)', justifyContent: 'flex-end', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)', order: -1, zIndex: 10, minWidth: '140px' }}>
+                        <div className="glass-panel podium-card" style={{ padding: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(250px, 42vw, 390px)', justifyContent: 'flex-end', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)', order: -1, zIndex: 10, minWidth: '140px', animationDelay: '100ms' }}>
                             <div
-                                style={{ width: 'clamp(90px, 18vw, 160px)', height: 'clamp(90px, 18vw, 160px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '12px', cursor: 'pointer' }}
+                                style={{ width: 'clamp(84px, 15vw, 132px)', height: 'clamp(84px, 15vw, 132px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '10px', cursor: 'pointer' }}
                                 onClick={(e) => handleAvatarClick(winners[0], e)}
                             >
                                 <img src={winners[0].avatar_url} style={podiumAvatarStyle} />
                             </div>
-                            <div style={{ background: '#FFD700', color: 'black', padding: '4px 12px', borderRadius: '20px', fontWeight: 'bold', marginBottom: '16px' }}>
+                            <div style={{ background: '#FFD700', color: 'black', padding: '4px 12px', borderRadius: '20px', fontWeight: 'bold', marginBottom: '12px' }}>
                                 WINNER
                             </div>
-                            <h1 style={{ marginBottom: '8px', fontSize: '2rem' }}>{winners[0].username}</h1>
-                            <div style={{ fontSize: '2rem', fontWeight: 900, color: '#FFD700' }}>{winners[0].score} pts</div>
+                            <h1 style={{ marginBottom: '6px', fontSize: '1.8rem' }}>{winners[0].username}</h1>
+                            <div style={{ fontSize: '1.8rem', fontWeight: 900, color: '#FFD700' }}>{winners[0].score} pts</div>
                         </div>
                     )}
 
                     {winners[2] && (
-                        <div className="glass-panel animate-in" style={{ padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(180px, 34vw, 280px)', justifyContent: 'flex-end', animationDelay: '400ms', minWidth: '120px' }}>
+                        <div className="glass-panel podium-card" style={{ padding: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(168px, 29vw, 250px)', justifyContent: 'flex-end', animationDelay: '300ms', minWidth: '118px' }}>
                             <div
-                                style={{ width: 'clamp(60px, 12vw, 100px)', height: 'clamp(60px, 12vw, 100px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '8px', cursor: 'pointer' }}
+                                style={{ width: 'clamp(56px, 10vw, 92px)', height: 'clamp(56px, 10vw, 92px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '6px', cursor: 'pointer' }}
                                 onClick={(e) => handleAvatarClick(winners[2], e)}
                             >
                                 <img src={winners[2].avatar_url} style={podiumAvatarStyle} />
                             </div>
-                            <h2 style={{ marginBottom: '8px' }}>{winners[2].username}</h2>
-                            <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{winners[2].score} pts</div>
-                            <div style={{ marginTop: '12px', color: '#CD7F32' }}>3rd</div>
+                            <h2 style={{ marginBottom: '6px' }}>{winners[2].username}</h2>
+                            <div style={{ fontSize: '1.35rem', fontWeight: 700 }}>{winners[2].score} pts</div>
+                            <div style={{ marginTop: '8px', color: '#CD7F32' }}>3rd</div>
                         </div>
                     )}
                 </div>
             )}
 
             {/* Stats Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', width: '100%', maxWidth: '900px', marginBottom: '48px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', width: '100%', maxWidth: '900px', marginBottom: '24px' }}>
                 {stats.map((stat, i) => (
-                    <div key={i} className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animationDelay: `${i * 100} ms` }}>
-                        <div style={{ width: '50px', height: '50px', borderRadius: '50%', background: `${stat.color} 20`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px', color: stat.color }}>
-                            <stat.icon size={24} />
+                    <div key={i} className="glass-panel" style={{ padding: '18px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animationDelay: `${i * 100} ms` }}>
+                        <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: `${stat.color} 20`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', color: stat.color }}>
+                            <stat.icon size={20} />
                         </div>
-                        <h3 style={{ color: '#888', textTransform: 'uppercase', fontSize: '0.8rem', letterSpacing: '1px', marginBottom: '8px' }}>{stat.label}</h3>
-                        <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '4px' }}>{stat.value}</div>
+                        <h3 style={{ color: '#888', textTransform: 'uppercase', fontSize: '0.76rem', letterSpacing: '1px', marginBottom: '6px' }}>{stat.label}</h3>
+                        <div style={{ fontSize: '1.1rem', fontWeight: 'bold', marginBottom: '4px' }}>{stat.value}</div>
                         {stat.subValue && <div style={{ fontSize: '0.9rem', color: '#666' }}>{stat.subValue}</div>}
                     </div>
                 ))}
             </div>
 
+            {/* Add Friend Prompt */}
+            {profile && (() => {
+                const nonFriends = players.filter(p => p.id !== profile.id && getFriendStatus(p.id) === 'none')
+                if (nonFriends.length === 0) return null
+                return (
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '18px' }}>
+                        {nonFriends.map(p => (
+                            <button
+                                key={p.id}
+                                className="btn-glass"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', fontSize: '0.82rem' }}
+                                onClick={() => { sendFriendRequest(p.id) }}
+                            >
+                                <img src={p.avatar_url} style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover' }} />
+                                <UserPlus size={14} />
+                                {p.username}
+                            </button>
+                        ))}
+                    </div>
+                )
+            })()}
+
             {amIHost ? (
-                <div style={{ display: 'flex', gap: '16px' }}>
+                <div style={{ display: 'flex', gap: '16px', marginTop: '4px' }}>
                     <button onClick={() => router.push('/')} className="btn-glass">
                         Home
                     </button>
@@ -542,7 +604,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     </button>
                 </div>
             ) : (
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginTop: '4px' }}>
                     <button onClick={() => router.push('/')} className="btn-glass">
                         Leave
                     </button>

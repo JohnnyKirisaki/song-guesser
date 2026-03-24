@@ -18,10 +18,17 @@ export type FriendUser = {
     }
 }
 
+export type IncomingRequest = {
+    id: string
+    username: string
+    avatar_url: string
+}
+
 export function useFriends() {
     const { profile } = useUser()
     const [friends, setFriends] = useState<FriendUser[]>([])
     const [incomingRequests, setIncomingRequests] = useState<string[]>([])
+    const [incomingRequestProfiles, setIncomingRequestProfiles] = useState<IncomingRequest[]>([])
     const [outgoingRequests, setOutgoingRequests] = useState<string[]>([])
     const [loading, setLoading] = useState(true)
 
@@ -67,6 +74,21 @@ export function useFriends() {
         }
     }, [profile])
 
+
+    // 1b. Fetch profiles for incoming requests
+    useEffect(() => {
+        if (incomingRequests.length === 0) {
+            setIncomingRequestProfiles([])
+            return
+        }
+        Promise.all(
+            incomingRequests.map(async (uid) => {
+                const snap = await get(ref(db, `profiles/${uid}`))
+                const data = snap.val()
+                return { id: uid, username: data?.username || 'Unknown', avatar_url: data?.avatar_url || '' }
+            })
+        ).then(setIncomingRequestProfiles).catch(() => {})
+    }, [incomingRequests])
 
     // 2. Fetch Friend Details & Listen for Status Updates
     useEffect(() => {
@@ -205,6 +227,7 @@ export function useFriends() {
     return {
         friends,
         incomingRequests,
+        incomingRequestProfiles,
         outgoingRequests,
         loading,
         getFriendStatus,

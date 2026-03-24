@@ -33,6 +33,7 @@ export type GameState = {
         artist: string
         title: string
         cover_url: string
+        album_name?: string | null
     }
 }
 
@@ -42,6 +43,7 @@ export type SongItem = {
     spotify_artist_id?: string
     artist_name: string
     track_name: string
+    album_name?: string | null
     cover_url: string
     preview_url: string | null
     picked_by_user_id: string

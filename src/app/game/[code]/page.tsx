@@ -70,6 +70,7 @@ export default function GamePage() {
     const [playingSongId, setPlayingSongId] = useState<string | null>(null) // Track which song is ACTUALLY playing
     const [scoreDeltas, setScoreDeltas] = useState<Record<string, number>>({})
     const [rankChanges, setRankChanges] = useState<Record<string, number>>({})
+    const [rankAnimPhase, setRankAnimPhase] = useState<'idle' | 'initial' | 'animate'>('idle')
     const [roomSongs, setRoomSongs] = useState<{ track_name: string, artist_name: string }[]>([])
     const [artistFocused, setArtistFocused] = useState(false)
     const [whoSangThatData, setWhoSangThatData] = useState<{
@@ -87,7 +88,8 @@ export default function GamePage() {
     const isWhoSangThatTemp = roomSettings?.mode === 'who_sang_that'
     const isRealRevealTemp = gameState?.phase === 'reveal'
     const isAudioStaleTemp = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
-    const isWaitingForAudioTemp = !isLyricsOnlyTemp && !isWhoSangThatTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStaleTemp || !gameState.round_start_time)
+    const isAlbumArtTemp = roomSettings?.mode === 'album_art'
+    const isWaitingForAudioTemp = !isLyricsOnlyTemp && !isWhoSangThatTemp && !isAlbumArtTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStaleTemp || !gameState.round_start_time)
     const previousSongTemp = (gameState?.current_round_index || 0) > 0 ? gameState?.playlist[(gameState?.current_round_index || 0) - 1] : null
     const effectiveSongTemp = (isWaitingForAudioTemp && previousSongTemp) ? previousSongTemp : currentSongTemp
 
@@ -472,6 +474,7 @@ export default function GamePage() {
     const isSongOnly = mode === 'song_only'
     const isGuessWho = mode === 'guess_who'
     const isWhoSangThat = mode === 'who_sang_that'
+    const isAlbumArt = mode === 'album_art'
     const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat
     const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat
     const duelingIds = gameState?.dueling_player_ids || []
@@ -835,7 +838,8 @@ export default function GamePage() {
 
         const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
         const isWhoSangThatMode = roomSettings?.mode === 'who_sang_that'
-        const shouldPlayAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatMode && gameState.phase === 'playing')
+        const isAlbumArtMode = roomSettings?.mode === 'album_art'
+        const shouldPlayAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatMode && !isAlbumArtMode && gameState.phase === 'playing')
         const previewUrl = typeof currentSong.preview_url === 'string' ? currentSong.preview_url.trim() : ''
         const normalizedPreview = previewUrl.replace(/^http:\/\//i, 'https://')
         const overridePreview = currentSong?.id ? audioPreviewOverrideRef.current[currentSong.id] : null
@@ -1048,8 +1052,8 @@ export default function GamePage() {
         if (!isHost || gameState?.phase !== 'playing') return
         if (gameState?.round_start_time) return // Already started
 
-        // If lyrics only or who_sang_that mode, there is no audio to wait for, so start immediately
-        if (roomSettings?.mode === 'lyrics_only' || roomSettings?.mode === 'who_sang_that') {
+        // Modes without round audio should start immediately
+        if (roomSettings?.mode === 'lyrics_only' || roomSettings?.mode === 'who_sang_that' || roomSettings?.mode === 'album_art') {
             update(ref(db, `rooms/${code}/game_state`), {
                 round_start_time: serverTimestamp() as any
             })
@@ -1131,6 +1135,7 @@ export default function GamePage() {
         prevRanksRef.current = ranks
         setScoreDeltas({})
         setRankChanges({})
+        setRankAnimPhase('idle')
     }, [gameState?.phase]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Compute score deltas and rank changes when reveal data arrives
@@ -1152,6 +1157,14 @@ export default function GamePage() {
         })
         setScoreDeltas(deltas)
         setRankChanges(changes)
+        // Trigger FLIP animation: render at old positions, then animate to new
+        const hasChanges = Object.values(changes).some(c => c !== 0)
+        if (hasChanges) {
+            setRankAnimPhase('initial')
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => setRankAnimPhase('animate'))
+            })
+        }
     }, [players, gameState?.phase])
 
     // Timer Countdown (Synced with Server Time + Skew)
@@ -1197,9 +1210,16 @@ export default function GamePage() {
             // Guard: timer must see a positive value before it can trigger force-reveal.
             // Prevents round-0 bug where elapsed time is calculated before audio loads.
             let everSawPositive = false
+            let countdownStarted = false
             const interval = setInterval(() => {
                 const t = updateTimer()
                 if (t > 0.5) everSawPositive = true
+
+                // Play continuous countdown sound when timer drops below 5s
+                if (!countdownStarted && t <= 5 && t > 0 && everSawPositive) {
+                    countdownStarted = true
+                    soundManager.play('countdown_tick')
+                }
                 if (t <= 0 && isHost && everSawPositive) {
                     clearInterval(interval)
                     // Give a 1s Grace Period for clients to auto-submit at t=0
@@ -1209,8 +1229,12 @@ export default function GamePage() {
                 }
             }, 100) // 100ms updates
 
-            return () => clearInterval(interval)
+            return () => {
+                clearInterval(interval)
+                soundManager.stop('countdown_tick')
+            }
         } else if (gameState?.phase === 'reveal') {
+            soundManager.stop('countdown_tick')
             setTimeLeft(0)
         }
     }, [gameState?.phase, gameState?.round_start_time, gameState?.force_reveal_at, roomSettings?.time, isHost, serverTimeOffset])
@@ -1219,11 +1243,10 @@ export default function GamePage() {
         if (!gameState || !currentSong) return null
         const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
         const isWhoSangThatAudio = roomSettings?.mode === 'who_sang_that'
-        // Only show during playing (hidden in reveal usually, unless we want to show it there too)
-        // Actually, user complained about silence.
+        const isAlbumArtAudio = roomSettings?.mode === 'album_art'
 
         // If playing/reveal phase and we expect audio:
-        const expectingAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatAudio && gameState.phase === 'playing')
+        const expectingAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatAudio && !isAlbumArtAudio && gameState.phase === 'playing')
 
         if (!expectingAudio) return null
 
@@ -1304,13 +1327,6 @@ export default function GamePage() {
         if (!isHost || gameState?.phase !== 'playing') return
         if (!gameState?.round_start_time) return  // Round not started yet — ignore stale has_submitted
 
-        const roundStartRaw = gameState.round_start_time
-        const roundStartMs = typeof roundStartRaw === 'number'
-            ? roundStartRaw
-            : roundStartRaw
-                ? new Date(roundStartRaw).getTime()
-                : null
-
         const activePlayers = (gameState?.is_sudden_death && duelingIds.length > 0)
             ? players.filter(p => duelingIds.includes(p.id))
             : players
@@ -1322,7 +1338,6 @@ export default function GamePage() {
                 ? p.submitted_at
                 : new Date(p.submitted_at).getTime()
             if (Number.isNaN(submittedAtMs)) return false
-            if (roundStartMs && submittedAtMs < roundStartMs) return false
             return true
         })
         if (allSubmitted && activePlayers.length > 0) {
@@ -1568,15 +1583,37 @@ export default function GamePage() {
     useEffect(() => {
         const previousHtmlOverflow = document.documentElement.style.overflow
         const previousBodyOverflow = document.body.style.overflow
+        const shouldLockScroll = status !== 'finished'
 
-        document.documentElement.style.overflow = 'hidden'
-        document.body.style.overflow = 'hidden'
+        document.documentElement.style.overflow = shouldLockScroll ? 'hidden' : ''
+        document.body.style.overflow = shouldLockScroll ? 'hidden' : ''
 
         return () => {
             document.documentElement.style.overflow = previousHtmlOverflow
             document.body.style.overflow = previousBodyOverflow
         }
-    }, [])
+    }, [status])
+
+    // Sync phase to <body> so flare pseudo-elements can react via CSS vars
+    const bodyPhase = gameState?.phase === 'reveal' ? 'reveal' : (gameState?.phase === 'playing' ? 'playing' : null)
+    useEffect(() => {
+        const cl = document.body.classList
+        if (bodyPhase === 'reveal') {
+            cl.add('phase-reveal')
+            cl.remove('phase-playing')
+        } else if (bodyPhase === 'playing') {
+            cl.add('phase-playing')
+            cl.remove('phase-reveal')
+        }
+        return () => { cl.remove('phase-reveal', 'phase-playing') }
+    }, [bodyPhase])
+
+    // Play sudden death sound when VS screen appears
+    useEffect(() => {
+        if (gameState?.phase === 'vs_screen') {
+            soundManager.play('sudden_death')
+        }
+    }, [gameState?.phase])
 
     // A. Finished -> Podium
     if (status === 'finished') {
@@ -1668,7 +1705,7 @@ export default function GamePage() {
 
     // If we are "playing" but audio is still loading, look like we are in reveal of PREVIOUS round
     const isAudioStale = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
-    const isWaitingForAudio = !isLyricsOnlyTemp && !isWhoSangThatTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
+    const isWaitingForAudio = !isLyricsOnlyTemp && !isWhoSangThatTemp && !isAlbumArtTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
 
     // Check if this is the very first moment of the game before round 1 actually starts playing
     const isGameStartWaiting = isWaitingForAudio && (
@@ -1693,6 +1730,7 @@ export default function GamePage() {
         ? players.filter(p => duelingIds.includes(p.id))
         : players
     const isUrgentTimer = gameState.phase === 'playing' && !isWaitingForAudio && timeLeft > 0 && timeLeft <= 5
+
     const modeLabel = ({
         normal: 'Guess That Tune',
         rapid: 'Quickdraw',
@@ -1701,6 +1739,7 @@ export default function GamePage() {
         lyrics_only: 'Lyrics Mode',
         guess_who: 'Who Got The Aux?',
         who_sang_that: 'Who Sang That?',
+        album_art: 'Album Art',
     } as Record<string, string>)[mode] || 'BeatBattle'
     const sortedDisplayPlayers = [...displayPlayers].sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score
@@ -1904,7 +1943,7 @@ export default function GamePage() {
             }
 
             {/* Main Game Area */}
-            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: isReveal ? '2vh' : '4vh', paddingBottom: isReveal ? '0' : '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: isReveal ? 'hidden' : 'visible', minHeight: 0 }}>
+            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: isReveal ? '2vh' : (isAlbumArt ? '11vh' : '4vh'), paddingBottom: isReveal ? '0' : '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: isReveal ? 'hidden' : 'visible', minHeight: 0 }}>
                 {/* Host skip button — invisible, hover to reveal */}
                 {isHost && gameState?.phase === 'playing' && (
                     <button
@@ -1917,7 +1956,7 @@ export default function GamePage() {
                 )}
                 <div className={`game-core${isReveal ? ' game-core--reveal' : ''}`}>
                     {/* Album Cover Area (Hidden until Reveal for lyrics/who-sang-that modes) */}
-                    {((!isLyricsOnly && !isWhoSangThat) || isReveal) && (() => {
+                    {((!isLyricsOnly && !isWhoSangThat && !isAlbumArt) || isReveal) && (() => {
                         const myResult = players.find(p => p.id === profile?.id)
                         const hasResult = myResult?.last_round_correct_title !== undefined
                         const iGotCorrect = hasResult && (myResult?.last_round_correct_title === true || myResult?.last_round_correct_artist === true)
@@ -1950,12 +1989,51 @@ export default function GamePage() {
                         )
                     })()}
 
+                    {/* Album Art Mode: Pixelated cover that de-pixelates over time */}
+                    {isAlbumArt && !isReveal && currentSong?.cover_url && (() => {
+                        const totalTime = roomSettings?.time || 15
+                        const progress = Math.max(0, Math.min(1, 1 - (timeLeft / totalTime)))
+                        // Keep it very blocky for most of the round, then sharpen quickly near the end.
+                        const revealProgress = Math.max(0, (progress - 0.45) / 0.55)
+                        const pixelSize = Math.max(10, Math.round(10 + (300 - 10) * Math.pow(revealProgress, 2.6)))
+                        return (
+                            <div style={{
+                                width: '300px', height: '300px', borderRadius: '22px', overflow: 'hidden',
+                                marginBottom: '32px', position: 'relative',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                            }}>
+                                <canvas
+                                    ref={(canvas) => {
+                                        if (!canvas) return
+                                        const ctx = canvas.getContext('2d')
+                                        if (!ctx) return
+                                        const img = new window.Image()
+                                        img.crossOrigin = 'anonymous'
+                                        img.onload = () => {
+                                            // Draw at low resolution, then scale up pixelated
+                                            canvas.width = pixelSize
+                                            canvas.height = pixelSize
+                                            ctx.imageSmoothingEnabled = false
+                                            ctx.drawImage(img, 0, 0, pixelSize, pixelSize)
+                                        }
+                                        img.src = currentSong.cover_url
+                                    }}
+                                    style={{
+                                        width: '300px', height: '300px',
+                                        imageRendering: 'pixelated',
+                                    }}
+                                />
+                            </div>
+                        )
+                    })()}
+
                     {/* Question / Inputs */}
                     {isReveal ? (
                         <div className="reveal-layout" style={{ textAlign: 'center', width: '100%', position: 'relative', zIndex: 1 }}>
                             {effectiveSong.picked_by_user_id === profile.id && (
                                 <div style={{ marginBottom: '8px', fontWeight: 700, color: '#FFD700' }}>
-                                    This was your song
+                                    {isAlbumArt ? 'This was your album' : 'This was your song'}
                                 </div>
                             )}
                             <h2 className="text-gradient reveal-slide" style={{
@@ -1965,12 +2043,27 @@ export default function GamePage() {
                                     ? `0 0 20px ${dominantColor.replace('rgb', 'rgba').replace(')', ', 0.6)')}, 0 0 40px ${dominantColor.replace('rgb', 'rgba').replace(')', ', 0.3)')}`
                                     : '0 0 20px rgba(29, 185, 84, 0.5)',
                             } as React.CSSProperties}>
-                                {effectiveSong.track_name}
+                                {isAlbumArt ? (gameState.current_round_answer?.album_name || effectiveSong.album_name || effectiveSong.track_name) : effectiveSong.track_name}
                             </h2>
                             <h3 className="reveal-slide" style={{ fontSize: 'clamp(1rem, 2.3vw, 1.3rem)', color: '#ccc', animationDelay: '0.2s' }}>
                                 {effectiveSong.artist_name}
                             </h3>
                             {/* We use 'songPicker' derived from currentSong mostly. Need to check if effectiveSong differs. */}
+                            {/* Song credit — shown in all modes */}
+                            {(() => {
+                                const picker = players.find(p => p.id === effectiveSong.picked_by_user_id)
+                                const isMine = picker?.id === profile.id
+                                if (picker && !isMine) {
+                                    return (
+                                        <div className="song-credit" style={{ marginTop: '10px' }}>
+                                            <img src={picker.avatar_url} alt={picker.username} />
+                                            <span>{picker.username} added this song</span>
+                                        </div>
+                                    )
+                                }
+                                return null
+                            })()}
+
                             {isWhoSangThat ? (
                                 // Who Sang That reveal: show both options, highlight the correct artist
                                 <div style={{ marginTop: '12px' }}>
@@ -2021,95 +2114,124 @@ export default function GamePage() {
                                         ))}
                                     </div>
                                 </div>
-                            ) : (() => {
-                                const picker = players.find(p => p.id === effectiveSong.picked_by_user_id)
-                                const isMine = picker?.id === profile.id
-                                if (picker && !isMine) {
-                                    return (
-                                        <div className="song-credit">
-                                            <img src={picker.avatar_url} alt={picker.username} />
-                                            <span>{picker.username} added this song</span>
-                                        </div>
-                                    )
-                                }
-                                return null
-                            })()}
+                            ) : null}
 
 
+                            {/* Round Results */}
+                            {(() => {
+                                const isCompactMode = displayPlayers.length >= 5
+                                return (
                             <div className="reveal-slide reveal-results-panel" style={{ marginTop: '14px', width: '100%', maxWidth: '760px', marginLeft: 'auto', marginRight: 'auto', animationDelay: '0.3s', textAlign: 'center' }}>
-                                <div style={{ fontWeight: 700, marginBottom: '8px', opacity: 0.9 }}>Round Results</div>
-                                <div className="reveal-results-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {displayPlayers.map((p, i) => {
-                                        // If viewing previous round (waiting for audio), we rely on 'last_' stats which ARE from previous round.
-                                        // But if we advanced round index, 'last_' stats might have been reset?
-                                        // In 'useEffect [gameState.current_round_index]', we reset stats:
-                                        // setPlayers(prev => prev.map(p => ({ ...p, last_round_correct... = undefined })))
-                                        // This means we CANNOT meaningfully show "Correct/Wrong" for the previous round once the round index has updated.
-                                        // The stats are gone from local state.
+                                <div style={{ fontWeight: 700, marginBottom: isCompactMode ? '12px' : '8px', opacity: 0.9 }}>Round Results</div>
 
-                                        // However, showing the Reveal UI without stats is still better than showing the empty Game Input with no audio.
-                                        // We can hide the specific "Correct/Wrong" pills if data is missing.
+                                {isCompactMode ? (
+                                    /* Compact grid — avatar bubbles with colored rings */
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '14px' }}>
+                                        {displayPlayers.map((p, i) => {
+                                            const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
+                                            const hasData = p.last_round_correct_title !== undefined
+                                            const ringColor = !hasData ? 'rgba(255,255,255,0.12)' : correct ? '#1ed760' : '#e91429'
+                                            const delta = scoreDeltas[p.id]
 
-                                        const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
-                                        const hasData = p.last_round_correct_title !== undefined
-
-                                        // If we are waiting for audio, it's safer to just show the leaderboard or minimal info?
-                                        // Actually, if we just transitioned, 'last_' stats in local state MIGHT be cleared.
-                                        // Let's check the useEffect again.
-
-                                        const delta = scoreDeltas[p.id]
-                                        const rankChange = rankChanges[p.id] ?? 0
-
-                                        return (
-                                            <div key={p.id} className="reveal-slide reveal-result-row" style={{
-                                                display: 'flex', alignItems: 'center', gap: '12px',
-                                                padding: '8px 12px', borderRadius: '10px',
-                                                background: correct ? 'rgba(30, 215, 96, 0.08)' : 'rgba(233, 20, 41, 0.08)',
-                                                border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`,
-                                                cursor: 'pointer',
-                                                animationDelay: `${0.35 + i * 0.06}s`,
-                                            }}
-                                                onClick={(e) => openUserMenu(p, e)}
-                                                onContextMenu={(e) => openUserMenu(p, e)}
-                                            >
-                                                {/* Left: Result */}
-                                                <div style={{ minWidth: '60px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                    {hasData ? (
-                                                        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: correct ? '#1ed760' : '#e91429' }}>
-                                                            {correct ? '✅ Correct' : '❌ Wrong'}
-                                                        </span>
-                                                    ) : (
-                                                        <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                                                            {isWaitingForAudio ? '...' : 'Ready'}
-                                                        </span>
-                                                    )}
+                                            return (
+                                                <div key={p.id} className="reveal-slide" style={{
+                                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+                                                    cursor: 'pointer', animationDelay: `${0.35 + i * 0.04}s`,
+                                                    width: '72px',
+                                                }}
+                                                    onClick={(e) => openUserMenu(p, e)}
+                                                    onContextMenu={(e) => openUserMenu(p, e)}
+                                                >
+                                                    {/* Avatar with ring */}
+                                                    <div style={{
+                                                        width: '46px', height: '46px', borderRadius: '50%', padding: '2px',
+                                                        background: ringColor,
+                                                        boxShadow: hasData ? `0 0 12px ${correct ? 'rgba(30,215,96,0.3)' : 'rgba(233,20,41,0.25)'}` : 'none',
+                                                    }}>
+                                                        <img src={p.avatar_url} alt={p.username} style={{
+                                                            width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover',
+                                                            display: 'block',
+                                                        }} />
+                                                    </div>
+                                                    {/* Name */}
+                                                    <div style={{ fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', textAlign: 'center' }}>
+                                                        {p.username}
+                                                    </div>
+                                                    {/* Points */}
+                                                    <div style={{ fontSize: '0.72rem', fontWeight: 800, color: !hasData ? 'var(--text-muted)' : correct ? '#1ed760' : '#e91429', position: 'relative' }}>
+                                                        {hasData ? (correct ? `+${p.last_round_points ?? 0}` : '0') : '-'}
+                                                        {delta && (
+                                                            <span key={`${p.id}-delta-${gameState?.current_round_index}`} className="score-delta" style={{ fontSize: '0.68rem' }}>
+                                                                +{delta}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
+                                            )
+                                        })}
+                                    </div>
+                                ) : (
+                                    /* Standard rows — for 4 or fewer players */
+                                    <div className="reveal-results-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        {displayPlayers.map((p, i) => {
+                                            const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
+                                            const hasData = p.last_round_correct_title !== undefined
+                                            const delta = scoreDeltas[p.id]
+                                            const rankChange = rankChanges[p.id] ?? 0
 
-                                                {/* Center: Avatar + Name */}
-                                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                                    <img src={p.avatar_url} alt={p.username} style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                                                    <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</span>
-                                                    {hasData && rankChange !== 0 && (
-                                                        <span style={{ fontSize: '0.6rem', fontWeight: 700, color: rankChange > 0 ? '#1ed760' : '#e91429' }}>
-                                                            {rankChange > 0 ? `▲${rankChange}` : `▼${Math.abs(rankChange)}`}
-                                                        </span>
-                                                    )}
-                                                </div>
+                                            return (
+                                                <div key={p.id} className="reveal-slide reveal-result-row" style={{
+                                                    display: 'flex', alignItems: 'center', gap: '12px',
+                                                    padding: '8px 12px', borderRadius: '10px',
+                                                    background: correct ? 'rgba(30, 215, 96, 0.08)' : 'rgba(233, 20, 41, 0.08)',
+                                                    border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`,
+                                                    cursor: 'pointer',
+                                                    animationDelay: `${0.35 + i * 0.06}s`,
+                                                }}
+                                                    onClick={(e) => openUserMenu(p, e)}
+                                                    onContextMenu={(e) => openUserMenu(p, e)}
+                                                >
+                                                    {/* Left: Result */}
+                                                    <div style={{ minWidth: '60px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                        {hasData ? (
+                                                            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: correct ? '#1ed760' : '#e91429' }}>
+                                                                {correct ? '✅ Correct' : '❌ Wrong'}
+                                                            </span>
+                                                        ) : (
+                                                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                                                {isWaitingForAudio ? '...' : 'Ready'}
+                                                            </span>
+                                                        )}
+                                                    </div>
 
-                                                {/* Right: Points */}
-                                                <div style={{ minWidth: '40px', textAlign: 'right', fontWeight: 800, fontSize: '0.95rem', color: correct ? '#1ed760' : '#e91429', flexShrink: 0, position: 'relative' }}>
-                                                    {hasData ? (correct ? `+${p.last_round_points ?? 0}` : '0') : '-'}
-                                                    {delta && (
-                                                        <span key={`${p.id}-delta-${gameState?.current_round_index}`} className="score-delta">
-                                                            +{delta}
-                                                        </span>
-                                                    )}
+                                                    {/* Center: Avatar + Name */}
+                                                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                                        <img src={p.avatar_url} alt={p.username} style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                                                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</span>
+                                                        {hasData && rankChange !== 0 && (
+                                                            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: rankChange > 0 ? '#1ed760' : '#e91429' }}>
+                                                                {rankChange > 0 ? `▲${rankChange}` : `▼${Math.abs(rankChange)}`}
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Right: Points */}
+                                                    <div style={{ minWidth: '40px', textAlign: 'right', fontWeight: 800, fontSize: '0.95rem', color: correct ? '#1ed760' : '#e91429', flexShrink: 0, position: 'relative' }}>
+                                                        {hasData ? (correct ? `+${p.last_round_points ?? 0}` : '0') : '-'}
+                                                        {delta && (
+                                                            <span key={`${p.id}-delta-${gameState?.current_round_index}`} className="score-delta">
+                                                                +{delta}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
                             </div>
+                                )
+                            })()}
 
                             <div className="reveal-next-round" style={{ marginTop: '12px', fontWeight: 'bold' }}>
                                 {isWaitingForAudio ? 'Syncing Audio...' : 'Next round starting...'}
@@ -2260,7 +2382,7 @@ export default function GamePage() {
                                 {showTitleInput && (
                                     <input
                                         ref={titleInputRef}
-                                        type="text" placeholder="Guess the Song Title..."
+                                        type="text" placeholder={isAlbumArt ? "Guess the Album Name..." : "Guess the Song Title..."}
                                         className="input-field"
                                         value={guess.title}
                                         onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
@@ -2315,7 +2437,14 @@ export default function GamePage() {
                             key={p.id}
 
                             className={`player-card ${isSubmitter ? 'submitted' : ''} ${resultClass} ${isMe ? 'me' : ''}${rank <= 3 ? ` rank-top rank-${rank}` : ''}`}
-                            style={{ cursor: 'pointer' }}
+                            style={{
+                                cursor: 'pointer',
+                                transform: rankAnimPhase === 'initial' && rankChanges[p.id]
+                                    ? `translateY(${rankChanges[p.id] * 54}px)` : undefined,
+                                transition: rankAnimPhase === 'animate'
+                                    ? 'transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), background 0.28s, border-color 0.28s, box-shadow 0.28s'
+                                    : rankAnimPhase === 'initial' ? 'none' : undefined,
+                            }}
                             onClick={(e) => openUserMenu(p, e)}
                             onContextMenu={(e) => openUserMenu(p, e)}
                         >

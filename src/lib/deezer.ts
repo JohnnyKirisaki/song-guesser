@@ -29,6 +29,7 @@ type ResolvedTrack = {
         cover_url: string
         duration: number
         link: string
+        album_title?: string
     }
     score: number
     warnings: string[]
@@ -235,7 +236,8 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                         preview_url: match.preview,
                         cover_url: coverUrl,
                         duration: match.duration,
-                        link: match.link
+                        link: match.link,
+                        album_title: match.album?.title || undefined
                     },
                     score: 100,
                     warnings: ['ISRC Match'],
@@ -374,6 +376,31 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
 
     let result: ResolvedTrack;
     if (bestMatch && passesThreshold) {
+        // If we have album info from Spotify and the Deezer match album doesn't match,
+        // try to find a candidate with the correct album art
+        let coverUrl = bestMatch.album?.cover_xl || bestMatch.album?.cover_big
+        let albumTitle = bestMatch.album?.title || undefined
+
+        if (track.album && bestMatch.album?.title) {
+            const spotifyAlbum = normalizeForCompare(track.album)
+            const deezerAlbum = normalizeForCompare(bestMatch.album.title)
+            if (spotifyAlbum && deezerAlbum && !deezerAlbum.includes(spotifyAlbum) && !spotifyAlbum.includes(deezerAlbum)) {
+                // Album mismatch — search candidates for a better cover
+                const betterCover = candidates.find((c: any) => {
+                    if (!c.album?.title) return false
+                    const cAlbum = normalizeForCompare(c.album.title)
+                    return cAlbum.includes(spotifyAlbum) || spotifyAlbum.includes(cAlbum)
+                })
+                if (betterCover?.album) {
+                    const upgraded = betterCover.album.cover_xl || betterCover.album.cover_big
+                    if (upgraded) {
+                        coverUrl = upgraded
+                        albumTitle = betterCover.album.title
+                    }
+                }
+            }
+        }
+
         result = {
             input: track,
             resolved: true,
@@ -382,9 +409,10 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                 title: bestMatch.title,
                 artist: bestMatch.artist.name,
                 preview_url: bestMatch.preview,
-                cover_url: bestMatch.album?.cover_xl || bestMatch.album?.cover_big,
+                cover_url: coverUrl,
                 duration: bestMatch.duration,
-                link: bestMatch.link
+                link: bestMatch.link,
+                album_title: albumTitle
             },
             score: bestScore,
             warnings: bestReasons,

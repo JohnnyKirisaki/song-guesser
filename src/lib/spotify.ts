@@ -12,6 +12,7 @@ export type SpotifyTrack = {
     spotify_artist_id?: string | null
     cover_url: string
     preview_url: string | null
+    album_name?: string | null
 }
 
 export type FailedTrack = { artist: string, title: string }
@@ -40,7 +41,8 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
                 artist: t.deezer.artist,
                 spotify_artist_id: t.input?.spotifyArtistId || null,
                 cover_url: t.deezer.cover_url,
-                preview_url: t.deezer.preview_url ? t.deezer.preview_url.replace(/^http:\/\//i, 'https://') : null
+                preview_url: t.deezer.preview_url ? t.deezer.preview_url.replace(/^http:\/\//i, 'https://') : null,
+                album_name: t.deezer.album_title || t.input?.album || null
             }))
 
         const failed = data.tracks
@@ -207,6 +209,7 @@ export async function addSongsToRoom(roomCode: string, userId: string, tracks: S
             spotify_artist_id: t.spotify_artist_id || null,
             artist_name: t.artist,
             track_name: t.name,
+            album_name: t.album_name || null,
             cover_url: t.cover_url || null,
             preview_url: t.preview_url,
             picked_by_user_id: userId

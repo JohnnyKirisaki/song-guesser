@@ -1,4 +1,4 @@
-export type ScoringMode = 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only'
+export type ScoringMode = 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'album_art'
 
 // --- Normalization ---
 
@@ -32,8 +32,9 @@ function stripTitleExtras(str: string): string {
         .replace(/\s*\([^)]*\)/g, ' ')
         .replace(/\s*\([^)]*$/g, ' ')
         .replace(/\s*\[.*?\]/g, ' ')
+        .replace(/\s*-\s*(deluxe|expanded|complete|platinum|special|collector'?s?|anniversary|bonus|tour|edition|version).*$/gi, ' ')
         .replace(/\s*-\s*(feat\.?.*|ft\.?.*|with .*|remix|edit|version|mix|live|acoustic|remaster|radio edit|extended mix).*$/gi, ' ')
-        .replace(/\s+(?:[a-z0-9]+\s+)?(?:version|remix|edit|mix|live|acoustic|remaster|instrumental|karaoke|cover|demo|extended)\b/gi, ' ')
+        .replace(/\s+(?:[a-z0-9]+\s+)?(?:version|remix|edit|mix|live|acoustic|remaster|instrumental|karaoke|cover|demo|extended|deluxe|expanded|complete|platinum|special|collector'?s?|anniversary|bonus|edition)\b/gi, ' ')
         // User Request: Remove everything after " - " or "/"
         .replace(/\s+-\s+.*$/g, ' ')
         .replace(/\/.*$/g, ' ')
@@ -409,6 +410,12 @@ export function calculateScore(
     } else if (mode === 'lyrics_only') {
         if (correctTitle) points += ARTIST_POINTS
         if (correctArtist) points += TITLE_POINTS
+    } else if (mode === 'album_art') {
+        // Album Art: title field = album name (4 base pts), artist field = artist (1 base pt)
+        // Time bonus applied per field independently
+        const timeMult = 1 + (timeLeft / totalTime)
+        if (correctTitle) points += 4 * timeMult  // album correct
+        if (correctArtist) points += 1 * timeMult // artist correct
     } else {
         // Normal
         if (correctTitle) points += TITLE_POINTS * timeMultiplier

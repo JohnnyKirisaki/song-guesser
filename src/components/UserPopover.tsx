@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState } from 'react'
 import { FriendStatus, useFriends } from '@/hooks/useFriends'
-import { UserPlus, UserMinus, UserCheck, X } from 'lucide-react'
+import { UserPlus, UserMinus, UserCheck, X, Swords } from 'lucide-react'
+import { db } from '@/lib/firebase'
+import { ref, get } from 'firebase/database'
 
 type UserPopoverProps = {
     targetUser: { id: string, username: string, avatar_url: string, score?: number }
@@ -16,6 +18,7 @@ export default function UserPopover({ targetUser, isOpen, onClose, currentUserPr
     const [loading, setLoading] = useState(false)
     const popoverRef = useRef<HTMLDivElement>(null)
     const [menuPos, setMenuPos] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
+    const [h2h, setH2h] = useState<{ myWins: number, theirWins: number } | null>(null)
 
     // Update status when popover opens or friends change
     useEffect(() => {
@@ -23,6 +26,19 @@ export default function UserPopover({ targetUser, isOpen, onClose, currentUserPr
             setStatus(getFriendStatus(targetUser.id))
         }
     }, [isOpen, getFriendStatus, targetUser.id])
+
+    // Fetch head-to-head stats
+    useEffect(() => {
+        if (!isOpen || !currentUserProfileId) return
+        setH2h(null)
+        const key = [currentUserProfileId, targetUser.id].sort().join('_')
+        get(ref(db, `h2h/${key}`)).then(snap => {
+            const data = snap.val()
+            if (data) {
+                setH2h({ myWins: data[currentUserProfileId] || 0, theirWins: data[targetUser.id] || 0 })
+            }
+        }).catch(() => {})
+    }, [isOpen, currentUserProfileId, targetUser.id])
 
     // Click outside to close
     useEffect(() => {
@@ -129,6 +145,24 @@ export default function UserPopover({ targetUser, isOpen, onClose, currentUserPr
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Score: {targetUser.score}</p>
                 )}
             </div>
+
+            {/* Head-to-Head Record */}
+            {h2h && (h2h.myWins > 0 || h2h.theirWins > 0) && (
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                    padding: '8px 16px', borderRadius: '10px',
+                    background: 'rgba(255,255,255,0.04)', width: '100%', justifyContent: 'center',
+                }}>
+                    <Swords size={16} style={{ color: 'var(--text-muted)' }} />
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: h2h.myWins >= h2h.theirWins ? 'var(--primary)' : 'var(--text-main)' }}>
+                        {h2h.myWins}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>-</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: h2h.theirWins > h2h.myWins ? 'var(--error)' : 'var(--text-main)' }}>
+                        {h2h.theirWins}
+                    </span>
+                </div>
+            )}
 
             {/* Action Buttons */}
             <div style={{ width: '100%', marginTop: '6px' }}>

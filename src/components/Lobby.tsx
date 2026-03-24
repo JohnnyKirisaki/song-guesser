@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, remove, onDisconnect, serverTimestamp } from 'firebase/database'
-import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X } from 'lucide-react'
+import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey, type FailedTrack } from '@/lib/spotify'
 import { soundManager } from '@/lib/sounds'
@@ -26,7 +26,7 @@ type Player = {
 type RoomSettings = {
     rounds: number
     time: number
-    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'guess_who' | 'who_sang_that'
+    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'guess_who' | 'who_sang_that' | 'album_art'
     no_duplicates?: boolean
 }
 
@@ -146,6 +146,13 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         }
         prevPlayerCountRef.current = players.length
     }, [players.length])
+
+    // Play fanfare when all players are ready
+    useEffect(() => {
+        if (players.length >= 2 && players.every(p => p.is_ready)) {
+            soundManager.play('all_ready')
+        }
+    }, [players])
 
     // --------------------------------------------------------------------------------
     // 1.5 PRESENCE (Hosting Status)
@@ -348,7 +355,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         { id: 'song_only', icon: Disc, label: 'Only Song Name' },
         { id: 'lyrics_only', icon: FileText, label: 'Lyrics Mode' },
         { id: 'guess_who', icon: HelpCircle, label: 'Who Got The Aux?' },
-        { id: 'who_sang_that', icon: Mic, label: 'Who Sang That?' }
+        { id: 'who_sang_that', icon: Mic, label: 'Who Sang That?' },
+        { id: 'album_art', icon: Image, label: 'Album Art' }
     ]
 
     return (

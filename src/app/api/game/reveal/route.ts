@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/firebase'
 import { ref, get, update, serverTimestamp } from 'firebase/database'
-import { calculateScore } from '@/lib/scoring'
+import { calculateScore, isMatch } from '@/lib/scoring'
 import { GameState, SongItem } from '@/lib/game-logic'
 import { fetchLyrics } from '@/lib/lyrics'
 import { resolvePlaylist } from '@/lib/deezer'
@@ -214,6 +214,20 @@ export async function POST(request: Request) {
                     correctTitle = !!g.title && g.title.toLowerCase().trim() === fullSong.artist_name.toLowerCase().trim()
                     correctArtist = false
                     points = correctTitle ? 1 : 0
+                } else if (mode === 'album_art') {
+                    // Album Art: guess.title = album name, guess.artist = artist name
+                    const albumAnswer = fullSong.album_name || fullSong.track_name // fallback to track name if no album
+                    correctTitle = isMatch(g.title, albumAnswer, false)
+                    correctArtist = isMatch(g.artist, fullSong.artist_name, true)
+                    const scoreData = calculateScore(
+                        { artist: g.artist, title: g.title },
+                        { artist: fullSong.artist_name, title: albumAnswer },
+                        timeLeftForPlayer,
+                        totalTime,
+                        mode,
+                        isSuddenDeath
+                    )
+                    points = scoreData.points
                 } else {
                     const scoreData = calculateScore(
                         { artist: g.artist, title: g.title },
@@ -262,7 +276,8 @@ export async function POST(request: Request) {
         updates[`rooms/${roomCode}/game_state/current_round_answer`] = {
             artist: fullSong.artist_name,
             title: fullSong.track_name,
-            cover_url: fullSong.cover_url
+            cover_url: fullSong.cover_url,
+            album_name: fullSong.album_name || null
         }
 
         // Backfill playlist item for history consistency

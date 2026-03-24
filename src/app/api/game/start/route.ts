@@ -29,16 +29,18 @@ export async function POST(request: Request) {
         const secrets: Record<string, SongItem> = {}
         const maskedPlaylist: MaskedSongItem[] = []
 
+        const isAlbumArt = settings.mode === 'album_art'
+
         playlist.forEach((song, index) => {
             secrets[index] = song
 
             maskedPlaylist.push({
                 id: song.id,
                 picked_by_user_id: song.picked_by_user_id,
-                preview_url: song.preview_url || null,
+                preview_url: isAlbumArt ? null : (song.preview_url || null),
                 artist_name: '???',
                 track_name: '???',
-                cover_url: '',
+                cover_url: isAlbumArt ? song.cover_url : '',
                 spotify_uri: song.spotify_uri || ''
             })
         })
