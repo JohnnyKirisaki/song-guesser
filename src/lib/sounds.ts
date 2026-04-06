@@ -12,6 +12,9 @@ export const SOUNDS = {
 class SoundManager {
     private audioCache: Record<string, HTMLAudioElement> = {}
     private volume: number = 0.5
+    private volumeOverrides: Partial<Record<keyof typeof SOUNDS, number>> = {
+        tick: 0.5
+    }
 
     constructor() {
         if (typeof window !== 'undefined') {
@@ -34,8 +37,9 @@ class SoundManager {
         const src = SOUNDS[key]
         const audio = this.audioCache[src] || new Audio(src)
 
+        const override = this.volumeOverrides[key] ?? 1
         audio.currentTime = 0
-        audio.volume = this.volume
+        audio.volume = this.volume * override
         audio.play().catch(() => {})
     }
 

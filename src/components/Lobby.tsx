@@ -112,6 +112,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     const [showFailedModal, setShowFailedModal] = useState(false)
     const lastProgressRef = useRef(0)
     const prevPlayerCountRef = useRef(0)
+    const prevAllReadyRef = useRef(false)
     const chartMenuRef = useRef<HTMLDivElement>(null)
 
     // Derived
@@ -167,11 +168,13 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         prevPlayerCountRef.current = players.length
     }, [players.length])
 
-    // Play fanfare when all players are ready
+    // Play fanfare only when readiness transitions to all-ready
     useEffect(() => {
-        if (players.length >= 2 && players.every(p => p.is_ready)) {
+        const allReady = players.length >= 2 && players.every(p => p.is_ready)
+        if (allReady && !prevAllReadyRef.current) {
             soundManager.play('all_ready')
         }
+        prevAllReadyRef.current = allReady
     }, [players])
 
     // --------------------------------------------------------------------------------
@@ -501,17 +504,18 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                             <div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
                                     <Users className="text-primary" size={22} color="var(--primary)" />
-                                    <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>Roster</h2>
+                                    <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>Players</h2>
                                 </div>
                             </div>
                         </div>
 
                         <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: `repeat(auto-fit, minmax(${isDenseRoster ? '220px' : '260px'}, 1fr))`,
+                            display: 'flex',
+                            flexDirection: 'column',
                             gap: isDenseRoster ? '10px' : '12px',
                             overflowY: 'auto',
-                            minHeight: 0
+                            minHeight: 0,
+                            alignItems: 'stretch'
                         }}>
                             {sortedPlayers.map((p, idx) => {
                                 const progress = Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))
@@ -537,6 +541,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                         key={p.id}
                                         className={`glass-panel lobby-player-card${p.is_host ? ' is-host' : ''}`}
                                         style={{
+                                            width: '100%',
                                             padding: isDenseRoster ? '8px 10px' : '10px 12px',
                                             border: '1px solid',
                                             borderColor: p.is_ready ? 'rgba(46,242,160,0.4)' : 'rgba(255,255,255,0.08)',
@@ -567,7 +572,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                     >
                                         <div style={{ display: 'flex', alignItems: 'center', gap: isDenseRoster ? '8px' : '10px', minWidth: 0, flex: 1 }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: isDenseRoster ? '8px' : '10px', minWidth: 0, flex: 1 }}>
-                                                <img src={p.avatar_url} alt={p.username} style={{ width: isDenseRoster ? '36px' : '46px', height: isDenseRoster ? '36px' : '46px', borderRadius: isDenseRoster ? '12px' : '16px', objectFit: 'cover', flexShrink: 0 }} />
+                                                <img src={p.avatar_url} alt={p.username} style={{ width: isDenseRoster ? '48px' : '58px', height: isDenseRoster ? '48px' : '58px', borderRadius: isDenseRoster ? '14px' : '18px', objectFit: 'cover', flexShrink: 0 }} />
                                                 <div style={{ minWidth: 0, flex: 1 }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                                         <span style={{
@@ -578,9 +583,6 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                                             ...statusDotColor
                                                         }} />
                                                         <div style={{ fontWeight: 800, fontSize: isDenseRoster ? '0.92rem' : '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</div>
-                                                        {p.id === profile?.id && (
-                                                            <span style={{ padding: '4px 8px', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 800, background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>You</span>
-                                                        )}
                                                         {p.id === hostId && <Crown size={16} color="#fbbf24" />}
                                                     </div>
                                                 </div>
@@ -698,9 +700,9 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                             </div>
                         </div>
                         {isHost ? (
-                            <button onClick={handleDeleteClick} style={{ display: 'flex', gap: '8px', padding: '10px 16px', color: 'var(--error)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '999px', alignItems: 'center', fontSize: '0.9rem', background: 'rgba(239,68,68,0.08)' }}><LogOut size={16} /> Delete Room</button>
+                            <button onClick={handleDeleteClick} style={{ display: 'flex', gap: '8px', padding: '10px 16px', color: 'var(--error)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '999px', alignItems: 'center', fontSize: '0.9rem', background: 'rgba(239,68,68,0.08)' }}><LogOut size={16} /></button>
                         ) : (
-                            <button onClick={leaveRoom} style={{ display: 'flex', gap: '8px', padding: '10px 16px', color: 'var(--error)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '999px', alignItems: 'center', fontSize: '0.9rem', background: 'rgba(239,68,68,0.08)' }}><LogOut size={16} /> Leave Lobby</button>
+                            <button onClick={leaveRoom} style={{ display: 'flex', gap: '8px', padding: '10px 16px', color: 'var(--error)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '999px', alignItems: 'center', fontSize: '0.9rem', background: 'rgba(239,68,68,0.08)' }}><LogOut size={16} /></button>
                         )}
                     </div>
 

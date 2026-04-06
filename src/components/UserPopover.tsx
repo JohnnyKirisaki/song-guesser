@@ -137,7 +137,7 @@ export default function UserPopover({ targetUser, isOpen, onClose, currentUserPr
             <img
                 src={targetUser.avatar_url}
                 alt={targetUser.username}
-                style={{ width: '72px', height: '72px', borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--glass-border)' }}
+                style={{ width: '90px', height: '90px', borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--glass-border)' }}
             />
             <div style={{ textAlign: 'center' }}>
                 <h3 style={{ fontSize: '1.05rem', fontWeight: 700 }}>{targetUser.username}</h3>

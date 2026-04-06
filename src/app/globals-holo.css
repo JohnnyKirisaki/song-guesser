@@ -849,8 +849,9 @@ select:focus {
 }
 
 .game-leaderboard.compact .player-card img {
-    width: 32px !important;
-    height: 32px !important;
+    width: 50px !important;
+    height: 50px !important;
+    border-radius: 8px !important;
 }
 
 .game-leaderboard.compact .player-card .player-name {
@@ -911,11 +912,15 @@ select:focus {
 .game-shell {
     padding-left: 320px;
     padding-right: 280px;
-    padding-top: 160px;
+    padding-top: 120px;
 }
 
-.game-shell.phase-reveal {
+body.phase-reveal .game-shell {
     overflow: hidden;
+}
+
+body.phase-reveal .game-shell.mode-who-sang-that .game-core--reveal {
+    justify-content: flex-start;
 }
 
 /* Dynamic background flare intensity — body-level so pseudo-elements inherit */
@@ -944,7 +949,7 @@ body.phase-playing {
     .game-shell {
         padding-left: 24px;
         padding-right: 24px;
-        padding-top: 140px;
+        padding-top: 110px;
     }
 }
 
@@ -963,6 +968,10 @@ body.phase-playing {
     min-height: 0;
     justify-content: center;
     gap: 0;
+}
+
+.game-shell.mode-who-sang-that .game-core--reveal {
+    justify-content: flex-start;
 }
 
 .game-shell.mode-who-sang-that .game-core {
@@ -1354,7 +1363,7 @@ body.phase-playing {
 
 .guess-who-avatar-frame {
     width: 100%;
-    height: 190px;
+    aspect-ratio: 1 / 1;
     overflow: hidden;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
 }
@@ -1363,7 +1372,7 @@ body.phase-playing {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    object-position: center top;
+    object-position: center center;
     display: block;
     border-radius: 0;
     transition: transform 0.28s ease, box-shadow 0.3s ease;

@@ -499,7 +499,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                         {drawPlayers.map(p => (
                             <div key={p.id} className="glass-panel animate-in" style={{ padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '200px', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)' }}>
                                 <div
-                                    style={{ width: '120px', height: '120px', minWidth: '120px', minHeight: '120px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #FFD700', marginBottom: '12px', cursor: 'pointer' }}
+                                    style={{ width: '140px', height: '140px', minWidth: '140px', minHeight: '140px', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #FFD700', marginBottom: '12px', cursor: 'pointer' }}
                                     onClick={(e) => handleAvatarClick(p, e)}
                                 >
                                     <img src={p.avatar_url} style={podiumAvatarStyle} />
@@ -515,7 +515,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     {winners[1] && (
                         <div className="glass-panel podium-card" style={{ padding: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(200px, 34vw, 300px)', justifyContent: 'flex-end', animationDelay: '200ms', minWidth: '126px' }}>
                             <div
-                                style={{ width: 'clamp(68px, 12vw, 100px)', height: 'clamp(68px, 12vw, 100px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '6px', cursor: 'pointer' }}
+                                style={{ width: 'clamp(80px, 14vw, 120px)', height: 'clamp(80px, 14vw, 120px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid silver', marginBottom: '6px', cursor: 'pointer' }}
                                 onClick={(e) => handleAvatarClick(winners[1], e)}
                             >
                                 <img src={winners[1].avatar_url} style={podiumAvatarStyle} />
@@ -529,7 +529,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     {winners[0] && (
                         <div className="glass-panel podium-card" style={{ padding: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(250px, 42vw, 390px)', justifyContent: 'flex-end', borderColor: '#FFD700', boxShadow: '0 0 30px rgba(255, 215, 0, 0.2)', order: -1, zIndex: 10, minWidth: '140px', animationDelay: '100ms' }}>
                             <div
-                                style={{ width: 'clamp(84px, 15vw, 132px)', height: 'clamp(84px, 15vw, 132px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '10px', cursor: 'pointer' }}
+                                style={{ width: 'clamp(100px, 18vw, 150px)', height: 'clamp(100px, 18vw, 150px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '4px solid #FFD700', marginBottom: '10px', cursor: 'pointer' }}
                                 onClick={(e) => handleAvatarClick(winners[0], e)}
                             >
                                 <img src={winners[0].avatar_url} style={podiumAvatarStyle} />
@@ -545,7 +545,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                     {winners[2] && (
                         <div className="glass-panel podium-card" style={{ padding: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', height: 'clamp(168px, 29vw, 250px)', justifyContent: 'flex-end', animationDelay: '300ms', minWidth: '118px' }}>
                             <div
-                                style={{ width: 'clamp(56px, 10vw, 92px)', height: 'clamp(56px, 10vw, 92px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '6px', cursor: 'pointer' }}
+                                style={{ width: 'clamp(70px, 12vw, 110px)', height: 'clamp(70px, 12vw, 110px)', minWidth: '0', minHeight: '0', flex: '0 0 auto', borderRadius: '50%', overflow: 'hidden', border: '3px solid #CD7F32', marginBottom: '6px', cursor: 'pointer' }}
                                 onClick={(e) => handleAvatarClick(winners[2], e)}
                             >
                                 <img src={winners[2].avatar_url} style={podiumAvatarStyle} />
@@ -585,7 +585,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                                 style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', fontSize: '0.82rem' }}
                                 onClick={() => { sendFriendRequest(p.id) }}
                             >
-                                <img src={p.avatar_url} style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover' }} />
+                                <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
                                 <UserPlus size={14} />
                                 {p.username}
                             </button>

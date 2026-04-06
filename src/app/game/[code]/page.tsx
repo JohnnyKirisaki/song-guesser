@@ -477,6 +477,14 @@ export default function GamePage() {
     const isAlbumArt = mode === 'album_art'
     const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat
     const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat
+
+    const isAudioExpected = () => {
+        if (!gameState || !currentSong) return false
+        if (gameState.phase === 'reveal') return true
+        if (gameState.phase !== 'playing') return false
+        return !isLyricsOnly && !isWhoSangThat && !isAlbumArt
+    }
+
     const duelingIds = gameState?.dueling_player_ids || []
     const isSuddenDeath = !!gameState?.is_sudden_death
     const isDuelingPlayer = !isSuddenDeath || duelingIds.length === 0 || duelingIds.includes(profile.id)
@@ -1978,7 +1986,7 @@ export default function GamePage() {
             }
 
             {/* Main Game Area */}
-            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: isReveal ? '2vh' : (isAlbumArt ? '11vh' : '4vh'), paddingBottom: isReveal ? '0' : '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: isReveal ? 'hidden' : 'visible', minHeight: 0 }}>
+            <div className="game-stage animate-in" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', paddingTop: '72px', paddingBottom: isReveal ? '0' : '20px', paddingLeft: '20px', paddingRight: '20px', position: 'relative', overflow: isReveal ? 'hidden' : 'visible', minHeight: 0 }}>
                 {/* Host skip button — invisible, hover to reveal */}
                 {isHost && gameState?.phase === 'playing' && (
                     <button
@@ -2099,174 +2107,37 @@ export default function GamePage() {
                                 return null
                             })()}
 
-                            {isWhoSangThat ? (
-                                // Who Sang That reveal: show both options, highlight the correct artist
-                                <div style={{ marginTop: '12px' }}>
-                                    <div style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                        The artist was...
-                                    </div>
-                                    {whoSangThatData?.options && (
-                                        <div className="who-sang-that-options who-sang-that-options--reveal" style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                                            {whoSangThatData.options.map((opt, i) => {
-                                                const isCorrect = opt.name.toLowerCase().trim() === effectiveSong.artist_name?.toLowerCase().trim()
-                                                const myGuess = players.find(pl => pl.id === profile.id)?.last_guess?.title
-                                                const iGuessedThis = myGuess?.toLowerCase().trim() === opt.name.toLowerCase().trim()
-                                                const extraClass = isCorrect ? ' correct-answer' : (iGuessedThis && !isCorrect ? ' wrong-answer' : '')
-                                                return (
-                                                    <button key={i} className={`guess-who-btn${extraClass}`} disabled style={{ cursor: 'default', padding: '12px 10px', minWidth: '120px' }}>
-                                                        <img src={opt.photo || '/placeholder-avatar.jpg'} alt={opt.name} className="guess-who-avatar" style={{ width: '80px', height: '80px' }} />
-                                                        <span className="guess-who-name">{opt.name}</span>
-                                                        {isCorrect && <span style={{ fontSize: '0.7rem', color: '#1ed760', marginTop: '-4px' }}>✓ correct</span>}
-                                                    </button>
-                                                )
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-                            ) : isGuessWho ? (
-                                // Guess Who reveal: show all players, highlight who actually added it
-                                <div style={{ marginTop: '12px' }}>
-                                    <div style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                        Who added this song?
-                                    </div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', width: '100%' }}>
-                                        {getGuessWhoRows(players).map((row, rowIdx) => (
-                                            <div key={rowIdx} style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                                                {row.map(p => {
-                                                    const isCorrectPerson = p.id === effectiveSong.picked_by_user_id
-                                                    const myGuess = players.find(pl => pl.id === profile.id)?.last_guess?.title
-                                                    const iGuessedThis = myGuess === p.id
-                                                    const extraClass = isCorrectPerson ? ' correct-answer' : (iGuessedThis && !isCorrectPerson ? ' wrong-answer' : '')
-                                                    return (
-                                                        <button key={p.id} className={`guess-who-btn${extraClass}`} disabled style={{ cursor: 'default', padding: '12px 10px' }}>
-                                                            <img src={p.avatar_url} alt={p.username} className="guess-who-avatar" style={{ width: '44px', height: '44px' }} />
-                                                            <span className="guess-who-name">{p.username}</span>
-                                                            {isCorrectPerson && <span style={{ fontSize: '0.7rem', color: '#1ed760', marginTop: '-4px' }}>✓ correct</span>}
-                                                        </button>
-                                                    )
-                                                })}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            ) : null}
-
-
-                            {/* Round Results */}
-                            {(() => {
-                                const isCompactMode = displayPlayers.length >= 5
-                                return (
                             <div className="reveal-slide reveal-results-panel" style={{ marginTop: '14px', width: '100%', maxWidth: '760px', marginLeft: 'auto', marginRight: 'auto', animationDelay: '0.3s', textAlign: 'center' }}>
-                                <div style={{ fontWeight: 700, marginBottom: isCompactMode ? '12px' : '8px', opacity: 0.9 }}>Round Results</div>
+                                <div style={{ fontWeight: 700, marginBottom: '12px', opacity: 0.9 }}>Round Results</div>
 
-                                {isCompactMode ? (
-                                    /* Compact grid — avatar bubbles with colored rings */
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '14px' }}>
-                                        {displayPlayers.map((p, i) => {
-                                            const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
-                                            const hasData = p.last_round_correct_title !== undefined
-                                            const ringColor = !hasData ? 'rgba(255,255,255,0.12)' : correct ? '#1ed760' : '#e91429'
-                                            const delta = scoreDeltas[p.id]
+                                <div style={{ display: 'grid', gridAutoFlow: 'column', justifyContent: 'center', alignItems: 'start', gap: '18px', width: '100%', overflowX: 'auto', paddingBottom: '10px', paddingTop: '4px', WebkitOverflowScrolling: 'touch' }}>
+                                    {displayPlayers.map((p, i) => {
+                                        const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
+                                        const hasData = p.last_round_correct_title !== undefined
+                                        const symbol = hasData ? (correct ? '✓' : '✕') : '…'
+                                        const borderColor = hasData ? (correct ? '#1ed760' : '#ff4c60') : 'rgba(255,255,255,0.18)'
 
-                                            return (
-                                                <div key={p.id} className="reveal-slide" style={{
-                                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
-                                                    cursor: 'pointer', animationDelay: `${0.35 + i * 0.04}s`,
-                                                    width: '72px',
-                                                }}
-                                                    onClick={(e) => openUserMenu(p, e)}
-                                                    onContextMenu={(e) => openUserMenu(p, e)}
-                                                >
-                                                    {/* Avatar with ring */}
-                                                    <div style={{
-                                                        width: '46px', height: '46px', borderRadius: '50%', padding: '2px',
-                                                        background: ringColor,
-                                                        boxShadow: hasData ? `0 0 12px ${correct ? 'rgba(30,215,96,0.3)' : 'rgba(233,20,41,0.25)'}` : 'none',
-                                                    }}>
-                                                        <img src={p.avatar_url} alt={p.username} style={{
-                                                            width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover',
-                                                            display: 'block',
-                                                        }} />
+                                        return (
+                                            <div key={p.id} className="reveal-slide" style={{ position: 'relative', flex: '0 0 auto', width: '180px', minWidth: '180px', animationDelay: `${0.35 + i * 0.04}s`, padding: '16px', borderRadius: '24px', border: `1px solid ${borderColor}`, background: 'rgba(255,255,255,0.06)', boxShadow: '0 18px 32px rgba(0,0,0,0.32)', overflow: 'hidden' }}>
+                                                <div style={{ position: 'absolute', top: '12px', left: '12px', fontSize: '0.8rem', fontWeight: 800, color: '#fff', opacity: 0.95 }}>
+                                                    {hasData ? `+${p.last_round_points ?? 0}` : '-'}
+                                                </div>
+                                                <div style={{ position: 'absolute', top: '12px', right: '12px', fontSize: '1.2rem', fontWeight: 800, color: borderColor }}>
+                                                    {symbol}
+                                                </div>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', paddingTop: '10px' }}>
+                                                    <div style={{ width: '116px', height: '116px', borderRadius: '24px', overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+                                                        <img src={p.avatar_url} alt={p.username} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                                                     </div>
-                                                    {/* Name */}
-                                                    <div style={{ fontSize: '0.7rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#f4f4f4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%', textAlign: 'center' }}>
                                                         {p.username}
                                                     </div>
-                                                    {/* Points */}
-                                                    <div style={{ fontSize: '0.72rem', fontWeight: 800, color: !hasData ? 'var(--text-muted)' : correct ? '#1ed760' : '#e91429', position: 'relative' }}>
-                                                        {hasData ? (correct ? `+${p.last_round_points ?? 0}` : '0') : '-'}
-                                                        {delta && (
-                                                            <span key={`${p.id}-delta-${gameState?.current_round_index}`} className="score-delta" style={{ fontSize: '0.68rem' }}>
-                                                                +{delta}
-                                                            </span>
-                                                        )}
-                                                    </div>
                                                 </div>
-                                            )
-                                        })}
-                                    </div>
-                                ) : (
-                                    /* Standard rows — for 4 or fewer players */
-                                    <div className="reveal-results-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                        {displayPlayers.map((p, i) => {
-                                            const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
-                                            const hasData = p.last_round_correct_title !== undefined
-                                            const delta = scoreDeltas[p.id]
-                                            const rankChange = rankChanges[p.id] ?? 0
-
-                                            return (
-                                                <div key={p.id} className="reveal-slide reveal-result-row" style={{
-                                                    display: 'flex', alignItems: 'center', gap: '12px',
-                                                    padding: '8px 12px', borderRadius: '10px',
-                                                    background: correct ? 'rgba(30, 215, 96, 0.08)' : 'rgba(233, 20, 41, 0.08)',
-                                                    border: `1px solid ${correct ? 'rgba(30, 215, 96, 0.22)' : 'rgba(233, 20, 41, 0.22)'}`,
-                                                    cursor: 'pointer',
-                                                    animationDelay: `${0.35 + i * 0.06}s`,
-                                                }}
-                                                    onClick={(e) => openUserMenu(p, e)}
-                                                    onContextMenu={(e) => openUserMenu(p, e)}
-                                                >
-                                                    {/* Left: Result */}
-                                                    <div style={{ minWidth: '60px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                        {hasData ? (
-                                                            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: correct ? '#1ed760' : '#e91429' }}>
-                                                                {correct ? '✅ Correct' : '❌ Wrong'}
-                                                            </span>
-                                                        ) : (
-                                                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                                                                {isWaitingForAudio ? '...' : 'Ready'}
-                                                            </span>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Center: Avatar + Name */}
-                                                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                                                        <img src={p.avatar_url} alt={p.username} style={{ width: '24px', height: '24px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                                                        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{p.username}</span>
-                                                        {hasData && rankChange !== 0 && (
-                                                            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: rankChange > 0 ? '#1ed760' : '#e91429' }}>
-                                                                {rankChange > 0 ? `▲${rankChange}` : `▼${Math.abs(rankChange)}`}
-                                                            </span>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Right: Points */}
-                                                    <div style={{ minWidth: '40px', textAlign: 'right', fontWeight: 800, fontSize: '0.95rem', color: correct ? '#1ed760' : '#e91429', flexShrink: 0, position: 'relative' }}>
-                                                        {hasData ? (correct ? `+${p.last_round_points ?? 0}` : '0') : '-'}
-                                                        {delta && (
-                                                            <span key={`${p.id}-delta-${gameState?.current_round_index}`} className="score-delta">
-                                                                +{delta}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
                             </div>
-                                )
-                            })()}
 
                             <div className="reveal-next-round" style={{ marginTop: '12px', fontWeight: 'bold' }}>
                                 {isWaitingForAudio ? 'Syncing Audio...' : 'Next round starting...'}
@@ -2439,6 +2310,11 @@ export default function GamePage() {
                                         {hasSubmitted ? 'ANSWER SUBMITTED' : 'SUBMIT GUESS'}
                                     </button>
                                 )}
+                                {hasSubmitted && !isGuessWho && !isWhoSangThat && (
+                                    <div style={{ color: 'var(--primary)', fontWeight: 600, fontSize: '0.9rem', textAlign: 'center' }}>
+                                        Answer locked in!
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -2484,7 +2360,7 @@ export default function GamePage() {
                             onContextMenu={(e) => openUserMenu(p, e)}
                         >
                             <div className={`rank-badge${rank <= 3 ? ` rank-badge--${rank}` : ''}`}>#{rank}</div>
-                            <img src={p.avatar_url} style={{ width: '40px', height: '40px', borderRadius: '50%', flexShrink: 0 }} />
+                            <img src={p.avatar_url} style={{ width: '60px', height: '60px', borderRadius: '8px', flexShrink: 0, objectFit: 'cover', display: 'block' }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <div className="player-name" style={{ fontSize: '0.95rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</div>
                                 <div className="player-score" style={{ fontSize: '0.85rem', opacity: 0.7 }}>
@@ -2532,8 +2408,28 @@ export default function GamePage() {
                     setAudioStatus('playing')
                     setAudioLoadError(false)
                 }}
-                onPause={() => console.log('[Audio Event] onPause')}
-                onEnded={() => console.log('[Audio Event] onEnded')}
+                onPause={() => {
+                    console.log('[Audio Event] onPause')
+                    if (isAudioExpected() && audioRef.current?.paused) {
+                        // Recover from unexpected pauses, especially early in round 1.
+                        setAudioStatus('idle')
+                        setTimeout(() => {
+                            audioRef.current?.play().catch(err => {
+                                console.error('[Audio] Resume after pause failed:', err)
+                            })
+                        }, 120)
+                    }
+                }}
+                onEnded={() => {
+                    console.log('[Audio Event] onEnded')
+                    if (isAudioExpected() && audioRef.current?.paused) {
+                        setTimeout(() => {
+                            audioRef.current?.play().catch(err => {
+                                console.error('[Audio] Resume after ended failed:', err)
+                            })
+                        }, 120)
+                    }
+                }}
                 onCanPlay={() => console.log('[Audio Event] onCanPlay')}
                 onWaiting={() => console.log('[Audio Event] onWaiting')}
                 onLoadedMetadata={(e) => {
