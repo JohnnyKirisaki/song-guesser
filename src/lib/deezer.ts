@@ -115,12 +115,32 @@ async function fetchWithRetry(url: string, retries = 4): Promise<any> {
 
 // iTunes Search API Fallback
 // Free, no API key, returns 30-second AAC previews
+// Serialized via itunesQueue to prevent concurrent requests from the same Vercel IP triggering 403s
+let itunesQueue: Promise<void> = Promise.resolve()
+
 async function resolveViaItunes(track: { artist: string, title: string, durationMs?: number, album?: string }): Promise<ResolvedTrack['deezer'] | null> {
+    // Serialize all iTunes calls — concurrent requests from one IP get 403d
+    const waitForPrev = itunesQueue
+    let release!: () => void
+    itunesQueue = new Promise(r => { release = r })
+
     try {
+        await waitForPrev
+
         const query = `${track.artist} ${track.title}`
         const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=10`
-        const res = await fetch(url, { cache: 'no-store' })
-        if (!res.ok) return null
+        console.warn(`[iTunes] Trying: ${track.artist} - ${track.title}`)
+
+        let res: Response | null = null
+        for (let attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt))
+            // No custom User-Agent — plain server fetch avoids bot-detection triggers
+            res = await fetch(url, { cache: 'no-store' })
+            if (res.ok) break
+            console.warn(`[iTunes] HTTP ${res.status} (attempt ${attempt + 1}/3)`)
+            if (res.status !== 429 && res.status !== 403) break
+        }
+        if (!res?.ok) return null
 
         const data = await res.json()
         const results: any[] = (data?.results || []).filter((r: any) => r.previewUrl && r.kind === 'song')
@@ -146,7 +166,8 @@ async function resolveViaItunes(track: { artist: string, title: string, duration
             }
         }
 
-        const artistMatched = bestReasons.some(r => r.includes('artist'))
+        const artistMatched = bestReasons.some(r => r.toLowerCase().includes('artist'))
+        console.warn(`[iTunes] ${track.artist} - ${track.title} | results: ${results.length} | bestScore: ${bestScore} | artistMatched: ${artistMatched} | reasons: ${bestReasons.join(', ')}`)
         if (!bestMatch || bestScore <= 40 || !artistMatched) return null
 
         // Upgrade artwork from 100x100 to 600x600
@@ -166,6 +187,8 @@ async function resolveViaItunes(track: { artist: string, title: string, duration
     } catch (e) {
         console.warn('[iTunes] Fallback failed:', e)
         return null
+    } finally {
+        release()
     }
 }
 
@@ -178,7 +201,10 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
 
     const cachedSnap = await get(ref(db, dbCachePath))
     if (cachedSnap.exists()) {
-        return cachedSnap.val() as ResolvedTrack
+        const cached = cachedSnap.val() as ResolvedTrack
+        // Don't use cached quota failures — let them retry so iTunes fallback can run
+        const isQuotaFailure = !cached.resolved && cached.warnings?.some((w: string) => w.includes('quota'))
+        if (!isQuotaFailure) return cached
     }
 
     const normArtist = normalizeForSearch(track.artist)
@@ -334,7 +360,8 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                     set(ref(db, dbCachePath), result)
                     return result
                 }
-                const result: ResolvedTrack = {
+                // Don't cache quota failures — next attempt should retry with iTunes
+                return {
                     input: track,
                     resolved: false,
                     score: -100,
@@ -342,8 +369,6 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                     candidates: [],
                     debug: { queriesUsed, candidatesFound: 0 }
                 }
-                set(ref(db, dbCachePath), result)
-                return result
             }
         }
     }
