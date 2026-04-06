@@ -18,7 +18,12 @@ export type SpotifyTrack = {
 
 export type FailedTrack = { artist: string, title: string }
 
-export type ImportResult = { tracks: SpotifyTrack[], failed: FailedTrack[] }
+export type ImportResult = {
+    tracks: SpotifyTrack[]
+    failed: FailedTrack[]
+    collectionName?: string | null
+    collectionCoverUrl?: string | null
+}
 
 type ResolveResult = { resolved: SpotifyTrack[], failed: FailedTrack[] }
 
@@ -116,7 +121,12 @@ export async function fetchSpotifyData(
             onProgress?.(20 + Math.round(progress * 0.8))
         })
         onProgress?.(100)
-        return { tracks: result.resolved, failed: result.failed }
+        return {
+            tracks: result.resolved,
+            failed: result.failed,
+            collectionName: 'YouTube Playlist',
+            collectionCoverUrl: result.resolved[0]?.album_cover_url || result.resolved[0]?.cover_url || null
+        }
 
     } else if (isSpotify) {
         onProgress?.(5)
@@ -146,7 +156,12 @@ export async function fetchSpotifyData(
             onProgress?.(20 + Math.round(progress * 0.8))
         })
         onProgress?.(100)
-        return { tracks: result.resolved, failed: result.failed }
+        return {
+            tracks: result.resolved,
+            failed: result.failed,
+            collectionName: data.collection?.name || null,
+            collectionCoverUrl: data.collection?.coverUrl || result.resolved[0]?.album_cover_url || result.resolved[0]?.cover_url || null
+        }
     }
 
     const singleTrack = [{ artist: '', title: input }]
@@ -155,7 +170,12 @@ export async function fetchSpotifyData(
         const result = await resolveViaServer(singleTrack)
         if (result.resolved.length > 0) {
             onProgress?.(100)
-            return { tracks: result.resolved, failed: result.failed }
+            return {
+                tracks: result.resolved,
+                failed: result.failed,
+                collectionName: input,
+                collectionCoverUrl: result.resolved[0]?.album_cover_url || result.resolved[0]?.cover_url || null
+            }
         }
     } catch (e) {
         // Fallback
@@ -163,7 +183,12 @@ export async function fetchSpotifyData(
 
     const fallback = await resolveViaServer([{ artist: '', title: input }])
     onProgress?.(100)
-    return { tracks: fallback.resolved, failed: fallback.failed }
+    return {
+        tracks: fallback.resolved,
+        failed: fallback.failed,
+        collectionName: input,
+        collectionCoverUrl: fallback.resolved[0]?.album_cover_url || fallback.resolved[0]?.cover_url || null
+    }
 }
 
 export type ChartKey = 'worldwide' | 'portugal'
@@ -184,7 +209,12 @@ export async function fetchChartTracks(
     // Deezer returned complete tracks (uri + preview_url) — no resolution needed
     if (data.resolved) {
         onProgress?.(100)
-        return { tracks: tracks as SpotifyTrack[], failed: [] }
+        return {
+            tracks: tracks as SpotifyTrack[],
+            failed: [],
+            collectionName: chartKey === 'worldwide' ? 'Top 100 Worldwide' : 'Top 100 Portugal',
+            collectionCoverUrl: tracks[0]?.album_cover_url || tracks[0]?.cover_url || null
+        }
     }
 
     // Apple Music fallback: metadata only — resolve via Deezer search
@@ -195,7 +225,12 @@ export async function fetchChartTracks(
     })
 
     onProgress?.(100)
-    return { tracks: result.resolved, failed: result.failed }
+    return {
+        tracks: result.resolved,
+        failed: result.failed,
+        collectionName: chartKey === 'worldwide' ? 'Top 100 Worldwide' : 'Top 100 Portugal',
+        collectionCoverUrl: result.resolved[0]?.album_cover_url || result.resolved[0]?.cover_url || null
+    }
 }
 
 export async function addSongsToRoom(roomCode: string, userId: string, tracks: SpotifyTrack[]) {

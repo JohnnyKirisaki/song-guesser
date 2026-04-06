@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { db } from '@/lib/firebase'
 import { ref, push, onChildAdded, query, limitToLast } from 'firebase/database'
-import { MessageCircleMore, Send } from 'lucide-react'
+import { Send } from 'lucide-react'
 
 type ChatMessage = {
     id: string
@@ -84,15 +84,6 @@ export default function LobbyChat({ roomCode, userId, username, avatarUrl }: {
                     paddingRight: '4px',
                 }}
             >
-                {messages.length === 0 && (
-                    <div className="empty-state-card" style={{ minHeight: '110px', padding: '18px 16px' }}>
-                        <div className="empty-state-icon" style={{ width: '42px', height: '42px', borderRadius: '14px' }}>
-                            <MessageCircleMore size={20} />
-                        </div>
-                        <div className="empty-state-title" style={{ fontSize: '0.88rem' }}>No messages yet</div>
-                        <div style={{ fontSize: '0.78rem', opacity: 0.8 }}>Break the silence and start the lobby chat.</div>
-                    </div>
-                )}
                 {messages.map(msg => (
                     <div key={msg.id} className="chat-msg-enter" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <img

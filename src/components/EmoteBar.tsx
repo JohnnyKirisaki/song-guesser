@@ -139,8 +139,8 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
                 >
                     {/* Emote list */}
                     <div style={{
-                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
-                        padding: '10px 6px 4px 6px',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5.5px',
+                        padding: '9px 5.5px 3.5px 5.5px',
                     }}>
                         {emotes.map(src => (
                             <button
@@ -151,7 +151,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
                                 onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.2)'}
                                 onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
                             >
-                                <img src={src} alt="emote" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
+                                <img src={src} alt="emote" style={{ width: '27px', height: '27px', objectFit: 'contain' }} />
                             </button>
                         ))}
                     </div>
@@ -162,7 +162,7 @@ export default function EmoteBar({ roomCode }: { roomCode: string }) {
                         title="Hide emotes"
                         style={{
                             background: 'none', border: 'none',
-                            width: '40px', height: '28px',
+                            width: '40px', height: '27px',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             cursor: 'pointer', color: 'var(--text-muted)', flexShrink: 0,
                             transition: 'color 0.2s',

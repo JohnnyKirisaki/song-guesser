@@ -40,6 +40,18 @@ type ResolvedTrack = {
     }
 }
 
+function formatCandidateReasons(candidate: any): string {
+    if (Array.isArray(candidate?._reasons) && candidate._reasons.length > 0) {
+        return candidate._reasons.join(', ')
+    }
+
+    if (Array.isArray(candidate?.warnings) && candidate.warnings.length > 0) {
+        return candidate.warnings.join(', ')
+    }
+
+    return 'No scoring reasons recorded'
+}
+
 // Concurrency Limiter
 async function asyncPool<T>(poolLimit: number, items: any[], iteratorFn: (item: any) => Promise<T>): Promise<T[]> {
     const ret: Promise<T>[] = []
@@ -491,7 +503,7 @@ export async function resolvePlaylist(tracks: any[], clearLog: boolean = false):
                     report += `    ${idx + 1}. "${c.title}" by "${c.artist.name}"\n`
                     report += `       Score: ${c._score}\n`
                     report += `       Link: ${c.link}\n`
-                    report += `       Reasons: ${c._reasons.join(', ')}\n`
+                    report += `       Reasons: ${formatCandidateReasons(c)}\n`
                 })
             } else {
                 report += `  No candidates found on Deezer.\n`

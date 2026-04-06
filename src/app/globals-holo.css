@@ -821,7 +821,7 @@ select:focus {
     position: fixed;
     left: 24px;
     top: 120px;
-    width: 240px;
+    width: 280px;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -834,7 +834,7 @@ select:focus {
 .game-leaderboard.grid-mode {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    width: 300px;
+    width: 340px;
     align-content: start;
 }
 
@@ -844,21 +844,21 @@ select:focus {
 
 /* 7+ players: shrink card padding + avatar */
 .game-leaderboard.compact .player-card {
-    padding: 6px 10px;
-    gap: 8px;
+    padding: 8px 12px;
+    gap: 10px;
 }
 
 .game-leaderboard.compact .player-card img {
-    width: 24px !important;
-    height: 24px !important;
+    width: 32px !important;
+    height: 32px !important;
 }
 
 .game-leaderboard.compact .player-card .player-name {
-    font-size: 0.78rem;
+    font-size: 0.85rem;
 }
 
 .game-leaderboard.compact .player-card .player-score {
-    font-size: 0.68rem;
+    font-size: 0.75rem;
 }
 
 @media (max-width: 1200px) {
@@ -909,7 +909,7 @@ select:focus {
 }
 
 .game-shell {
-    padding-left: 280px;
+    padding-left: 320px;
     padding-right: 280px;
     padding-top: 160px;
 }
@@ -935,7 +935,7 @@ body.phase-playing {
 
 @media (max-width: 1400px) {
     .game-shell {
-        padding-left: 220px;
+        padding-left: 260px;
         padding-right: 220px;
     }
 }

@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, remove, onDisconnect, serverTimestamp } from 'firebase/database'
-import { Users, Play, Copy, Check, Settings as SettingsIcon, Loader2, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image } from 'lucide-react'
+import { Users, Play, Copy, Check, Settings as SettingsIcon, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey, type FailedTrack } from '@/lib/spotify'
 import { soundManager } from '@/lib/sounds'
@@ -21,6 +21,9 @@ type Player = {
     is_importing?: boolean
     import_progress?: number
     joined_at?: number
+    playlist_name?: string | null
+    playlist_cover_url?: string | null
+    playlist_song_count?: number | null
 }
 
 type RoomSettings = {
@@ -54,6 +57,22 @@ const RadialProgress = ({ progress, size = 24, strokeWidth = 3, color = 'current
     )
 }
 
+function progressToColor(progress: number): string {
+    const p = Math.max(0, Math.min(100, progress))
+    if (p < 50) {
+        const t = p / 50
+        const r = 239 + Math.round((245 - 239) * t)
+        const g = 68 + Math.round((158 - 68) * t)
+        const b = 68 + Math.round((11 - 68) * t)
+        return `rgb(${r}, ${g}, ${b})`
+    }
+    const t = (p - 50) / 50
+    const r = 245 + Math.round((34 - 245) * t)
+    const g = 158 + Math.round((197 - 158) * t)
+    const b = 11 + Math.round((94 - 11) * t)
+    return `rgb(${r}, ${g}, ${b})`
+}
+
 export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { roomCode: string, initialSettings: any, isHost: boolean, hostId: string }) {
     const { profile } = useUser()
     const router = useRouter()
@@ -80,6 +99,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     }
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const [creationProgress, setCreationProgress] = useState(0)
+    const [shareUrl, setShareUrl] = useState('')
 
 
     // Import State
@@ -228,7 +248,14 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
 
             // Auto-Ready & Finished Importing
             const playerRef = ref(db, `rooms/${roomCode}/players/${profile.id}`)
-            await update(playerRef, { is_ready: true, is_importing: false, import_progress: 100 })
+            await update(playerRef, {
+                is_ready: true,
+                is_importing: false,
+                import_progress: 100,
+                playlist_name: result.collectionName || 'Imported Playlist',
+                playlist_cover_url: result.collectionCoverUrl || null,
+                playlist_song_count: result.tracks.length
+            })
 
         } catch (error: any) {
             console.error(error)
@@ -252,6 +279,10 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         return () => document.removeEventListener('mousedown', handleClickOutside)
     }, [showChartMenu])
 
+    useEffect(() => {
+        setShareUrl(window.location.href)
+    }, [])
+
     const handleChartImport = async (chartKey: ChartKey) => {
         if (!profile || hasImported) {
             if (hasImported) alert('You have already imported a playlist!')
@@ -274,7 +305,14 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
             })
             await addSongsToRoom(roomCode, profile.id, result.tracks)
             if (result.failed.length > 0) setFailedTracks(result.failed)
-            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_ready: true, is_importing: false, import_progress: 100 })
+            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), {
+                is_ready: true,
+                is_importing: false,
+                import_progress: 100,
+                playlist_name: result.collectionName || 'Imported Playlist',
+                playlist_cover_url: result.collectionCoverUrl || null,
+                playlist_song_count: result.tracks.length
+            })
         } catch (error: any) {
             console.error(error)
             alert(error.message || 'Failed to import chart')
@@ -343,147 +381,338 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     }
 
     const copyCode = () => {
-        navigator.clipboard.writeText(window.location.href)
+        navigator.clipboard.writeText(shareUrl || window.location.href)
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
     }
 
     const modes = [
-        { id: 'normal', icon: Music, label: 'Guess That Tune' },
-        { id: 'rapid', icon: Zap, label: 'Quickdraw' },
-        { id: 'artist_only', icon: Mic2, label: 'Only Artist Name' },
-        { id: 'song_only', icon: Disc, label: 'Only Song Name' },
-        { id: 'lyrics_only', icon: FileText, label: 'Lyrics Mode' },
-        { id: 'guess_who', icon: HelpCircle, label: 'Who Got The Aux?' },
-        { id: 'who_sang_that', icon: Mic, label: 'Who Sang That?' },
-        { id: 'album_art', icon: Image, label: 'Album Art' }
+        { id: 'normal', icon: Music, label: 'Guess That Tune', description: 'Guess artist and song title from the clip.' },
+        { id: 'rapid', icon: Zap, label: 'Quickdraw', description: 'Short fuse rounds built for fast answers.' },
+        { id: 'artist_only', icon: Mic2, label: 'Only Artist Name', description: 'Only the artist matters. Song title guesses do not count.' },
+        { id: 'song_only', icon: Disc, label: 'Only Song Name', description: 'Focus on song titles and ignore artist credit.' },
+        { id: 'lyrics_only', icon: FileText, label: 'Lyrics Mode', description: 'Recognize songs from lyric snippets instead of audio alone.' },
+        { id: 'guess_who', icon: HelpCircle, label: 'Who Got The Aux?', description: 'Figure out which player added the revealed song.' },
+        { id: 'who_sang_that', icon: Mic, label: 'Who Sang That?', description: 'Identify the vocalist from the performance.' },
+        { id: 'album_art', icon: Image, label: 'Album Art', description: 'Solve the round from the album cover reveal.' }
     ]
+
+    const sortedPlayers = [...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0))
+    const readyPlayers = players.filter(p => p.is_ready).length
+    const importingPlayers = players.filter(p => p.is_importing).length
+    const waitingPlayers = players.length - readyPlayers
+    const isDenseRoster = players.length >= 10
+    const statusTone = creationProgress > 0
+        ? 'Launching match'
+        : importingPlayers > 0
+            ? 'Importing libraries'
+            : players.length >= 2 && waitingPlayers === 0
+                ? 'Everyone is locked in'
+                : 'Waiting on players'
+    const modeMeta = modes.find(mode => mode.id === settings.mode)
+    const viewportHeight = 'calc(100dvh - 96px)'
+    const readyPlayersCount = players.filter(p => p.is_ready).length
+    const canHostStart = totalSongs > 0 && readyPlayersCount > 0 && !players.some(p => p.is_importing) && !isStarting
 
     return (
         <div style={{
-            display: 'flex', gap: '24px', minHeight: 'calc(100vh - 100px)',
-            padding: '24px', maxWidth: '1200px', margin: '0 auto', flexWrap: 'wrap',
-            alignContent: 'flex-start'
+            height: viewportHeight,
+            padding: '16px 20px',
+            width: '100%',
+            maxWidth: 'none',
+            margin: '0 auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            overflow: 'hidden'
         }}>
-            {/* LEFT: Player List */}
-            <div className="glass-panel" style={{ flex: '1 1 300px', padding: '24px', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                    <Users className="text-primary" size={24} color="var(--primary)" />
-                    <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Players ({players.length})</h2>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1 }}>
-                    {[...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0)).map((p, idx) => (
-                        <div key={p.id} className={`glass-panel lobby-player-card${p.is_host ? ' is-host' : ''}`} style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px',
-                            border: '1px solid', borderColor: p.is_ready ? 'var(--primary)' : p.is_host ? 'rgba(29,185,84,0.25)' : 'rgba(255,255,255,0.08)',
-                            background: p.is_ready ? 'rgba(46, 242, 160, 0.08)' : 'rgba(255, 255, 255, 0.04)',
-                            cursor: 'pointer', transition: 'background 0.2s', height: '66px',
-                            animationDelay: `${idx * 0.07}s`
+            <style jsx global>{`
+                @keyframes playlistMarquee {
+                    0% { transform: translateX(0); }
+                    100% { transform: translateX(calc(-100% - 18px)); }
+                }
+            `}</style>
+            <div className="glass-panel" style={{
+                padding: '14px 18px',
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) auto auto auto auto',
+                alignItems: 'center',
+                gap: '12px',
+                background: 'linear-gradient(135deg, rgba(20,20,24,0.92), rgba(26,26,30,0.86))',
+                overflow: 'hidden'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--primary)', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 800 }}>
+                        <Users size={16} />
+                        Lobby
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 900, whiteSpace: 'nowrap' }}>
+                        {roomCode}
+                    </div>
+                    <button
+                        onClick={copyCode}
+                        style={{
+                            minWidth: 'auto',
+                            padding: '8px 10px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: '10px',
+                            color: 'var(--text-main)'
                         }}
-                            onClick={(e) => openUserMenu(p, e)}
-                            onContextMenu={(e) => openUserMenu(p, e)}
-                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
-                            onMouseLeave={(e) => e.currentTarget.style.background = p.is_ready ? 'rgba(46, 242, 160, 0.08)' : 'rgba(255, 255, 255, 0.04)'}
-                        >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <img src={p.avatar_url} alt={p.username} style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
-                                <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                                    <div style={{ fontWeight: 700 }}>{p.username}</div>
-                                    <div style={{ fontSize: '0.8rem', color: p.is_ready ? 'var(--primary)' : 'var(--text-muted)' }}>
-                                        {p.is_importing
-                                            ? `IMPORTING ${Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))}%`
-                                            : (p.is_ready ? 'READY' : 'NOT READY')}
-                                    </div>
-                                    {p.is_importing && (
-                                        <div style={{
-                                            position: 'absolute', top: '100%', left: 0, marginTop: '2px',
-                                            height: '6px', width: '120px',
-                                            background: 'rgba(255,255,255,0.1)', borderRadius: '999px', overflow: 'hidden',
-                                            boxShadow: '0 0 10px rgba(0, 0, 0, 0.5)'
-                                        }}>
-                                            <div style={{
-                                                height: '100%', width: `${Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))}%`,
-                                                background: `hsl(${Math.min(100, Math.max(0, p.import_progress ?? 0)) * 1.2}, 100%, 45%)`,
-                                                transition: 'width 0.3s ease-out, background 0.3s ease-out'
-                                            }} />
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                {isHost && p.id !== hostId && (
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); kickPlayer(p.id) }}
-                                        style={{ color: 'var(--error)', padding: '4px' }}
-                                    >
-                                        <XCircle size={16} />
-                                    </button>
-                                )}
-                                {p.id === hostId && <Crown size={16} color="#fbbf24" />}
-                            </div>
-                        </div>
-                    ))}
-
-                    {selectedPlayer && (
-                        <UserPopover
-                            isOpen={!!selectedPlayer}
-                            targetUser={selectedPlayer}
-                            onClose={closeUserMenu}
-                            currentUserProfileId={profile?.id}
-                            anchorPoint={menuAnchor || undefined}
-                        />
-                    )}
+                        aria-label={copied ? 'Copied' : 'Copy invite link'}
+                        title={copied ? 'Copied' : 'Copy invite link'}
+                    >
+                        {copied ? <Check size={16} /> : <Copy size={16} />}
+                    </button>
                 </div>
-
-                <div style={{ marginTop: '24px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                        <span style={{ fontWeight: 700 }}>Room Code:</span>
-                        <span style={{ fontWeight: 900, letterSpacing: '2px' }}>{roomCode}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <input readOnly value={window.location.href} className="ui-input" style={{ flex: 1, textOverflow: 'ellipsis', padding: '8px', color: 'var(--text-muted)' }} />
-                        <button onClick={copyCode} className="btn-primary" style={{ padding: '8px 16px', minWidth: 'auto' }}>
-                            {copied ? <Check size={18} /> : <Copy size={18} />}
-                        </button>
-                    </div>
+                <div className="glass-panel" style={{ padding: '10px 12px', background: 'rgba(255,255,255,0.04)', width: '190px', minHeight: '58px' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Status</div>
+                    <div style={{ marginTop: '4px', fontWeight: 800, fontSize: '1rem', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{statusTone}</div>
                 </div>
-
-                {/* Lobby Chat */}
-                {profile && (
-                    <LobbyChat
-                        roomCode={roomCode}
-                        userId={profile.id}
-                        username={profile.username}
-                        avatarUrl={profile.avatar_url}
-                    />
-                )}
+                <div className="glass-panel" style={{ padding: '10px 12px', background: 'rgba(255,255,255,0.04)', width: '190px', minHeight: '58px' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Ready</div>
+                    <div style={{ marginTop: '4px', fontWeight: 800, fontSize: '0.9rem', lineHeight: 1.2 }}>{readyPlayers}/{players.length || 1}</div>
+                </div>
+                <div className="glass-panel" style={{ padding: '10px 12px', background: 'rgba(255,255,255,0.04)', width: '190px', minHeight: '58px' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Songs</div>
+                    <div style={{ marginTop: '4px', fontWeight: 800, fontSize: '0.9rem', lineHeight: 1.2 }}>{totalSongs}</div>
+                </div>
+                <div className="glass-panel" style={{ padding: '10px 12px', background: 'rgba(255,255,255,0.04)', width: '190px', minHeight: '58px' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Mode</div>
+                    <div style={{ marginTop: '4px', fontWeight: 800, fontSize: '1rem', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{modeMeta?.label || 'Unknown'}</div>
+                </div>
             </div>
 
-            {/* RIGHT: Settings */}
-            <div className="glass-panel" style={{ flex: '1.5 1 400px', padding: '32px', display: 'flex', flexDirection: 'column', gap: '24px', overflowY: 'auto' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <SettingsIcon className="text-primary" size={24} color="var(--primary)" />
-                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Game Settings</h2>
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(320px, 1.1fr) minmax(0, 1.5fr)',
+                gap: '16px',
+                alignItems: 'stretch',
+                minHeight: 0,
+                flex: 1,
+                overflow: 'hidden'
+            }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', minWidth: 0, minHeight: 0 }}>
+                    <div className="glass-panel" style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px', minHeight: 0, flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+                                    <Users className="text-primary" size={22} color="var(--primary)" />
+                                    <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>Roster</h2>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: `repeat(auto-fit, minmax(${isDenseRoster ? '220px' : '260px'}, 1fr))`,
+                            gap: isDenseRoster ? '10px' : '12px',
+                            overflowY: 'auto',
+                            minHeight: 0
+                        }}>
+                            {sortedPlayers.map((p, idx) => {
+                                const progress = Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))
+                                const playlistTitle = `${p.playlist_name || 'Imported Collection'}${typeof p.playlist_song_count === 'number' ? ` (${p.playlist_song_count})` : ''}`
+                                const shouldScrollPlaylist = playlistTitle.length > (isDenseRoster ? 18 : 24)
+                                const statusDotColor = p.is_importing
+                                    ? {
+                                        background: '#7dd3fc',
+                                        boxShadow: '0 0 0 4px rgba(125,211,252,0.12)'
+                                    }
+                                    : p.is_ready
+                                        ? {
+                                            background: 'var(--primary)',
+                                            boxShadow: '0 0 0 4px rgba(46,242,160,0.12)'
+                                        }
+                                        : {
+                                            background: '#fde047',
+                                            boxShadow: '0 0 0 4px rgba(250,204,21,0.10)'
+                                        }
+
+                                return (
+                                    <div
+                                        key={p.id}
+                                        className={`glass-panel lobby-player-card${p.is_host ? ' is-host' : ''}`}
+                                        style={{
+                                            padding: isDenseRoster ? '8px 10px' : '10px 12px',
+                                            border: '1px solid',
+                                            borderColor: p.is_ready ? 'rgba(46,242,160,0.4)' : 'rgba(255,255,255,0.08)',
+                                            background: p.is_ready
+                                                ? 'linear-gradient(180deg, rgba(46,242,160,0.12), rgba(255,255,255,0.04))'
+                                                : 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))',
+                                            cursor: 'pointer',
+                                            transition: 'transform 0.2s ease, background 0.2s ease, border-color 0.2s ease',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            gap: isDenseRoster ? '8px' : '10px',
+                                            minHeight: isDenseRoster ? '62px' : '74px',
+                                            animationDelay: `${idx * 0.07}s`
+                                        }}
+                                        onClick={(e) => openUserMenu(p, e)}
+                                        onContextMenu={(e) => openUserMenu(p, e)}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(-2px)'
+                                            e.currentTarget.style.background = 'linear-gradient(180deg, rgba(255,255,255,0.1), rgba(255,255,255,0.04))'
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.transform = 'translateY(0px)'
+                                            e.currentTarget.style.background = p.is_ready
+                                                ? 'linear-gradient(180deg, rgba(46,242,160,0.12), rgba(255,255,255,0.04))'
+                                                : 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: isDenseRoster ? '8px' : '10px', minWidth: 0, flex: 1 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: isDenseRoster ? '8px' : '10px', minWidth: 0, flex: 1 }}>
+                                                <img src={p.avatar_url} alt={p.username} style={{ width: isDenseRoster ? '36px' : '46px', height: isDenseRoster ? '36px' : '46px', borderRadius: isDenseRoster ? '12px' : '16px', objectFit: 'cover', flexShrink: 0 }} />
+                                                <div style={{ minWidth: 0, flex: 1 }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                                        <span style={{
+                                                            width: isDenseRoster ? '8px' : '9px',
+                                                            height: isDenseRoster ? '8px' : '9px',
+                                                            borderRadius: '999px',
+                                                            flexShrink: 0,
+                                                            ...statusDotColor
+                                                        }} />
+                                                        <div style={{ fontWeight: 800, fontSize: isDenseRoster ? '0.92rem' : '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</div>
+                                                        {p.id === profile?.id && (
+                                                            <span style={{ padding: '4px 8px', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 800, background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>You</span>
+                                                        )}
+                                                        {p.id === hostId && <Crown size={16} color="#fbbf24" />}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {(p.playlist_name || p.playlist_cover_url) && (
+                                            <div style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: isDenseRoster ? '8px' : '10px',
+                                                flexShrink: 0,
+                                                width: isDenseRoster ? '44%' : '48%',
+                                                marginLeft: 'auto'
+                                            }}>
+                                                <img
+                                                    src={p.playlist_cover_url || '/placeholder-cover.jpg'}
+                                                    alt={p.playlist_name || 'Playlist cover'}
+                                                    style={{
+                                                        width: isDenseRoster ? '30px' : '36px',
+                                                        height: isDenseRoster ? '30px' : '36px',
+                                                        borderRadius: '9px',
+                                                        objectFit: 'cover',
+                                                        flexShrink: 0
+                                                    }}
+                                                    onError={(e) => { e.currentTarget.src = '/placeholder-cover.jpg' }}
+                                                />
+                                                <div style={{ minWidth: 0, overflow: 'hidden', width: '100%' }}>
+                                                    <div style={{ fontSize: isDenseRoster ? '0.8rem' : '0.9rem', fontWeight: 800, whiteSpace: 'nowrap' }}>
+                                                        {shouldScrollPlaylist ? (
+                                                            <div style={{ display: 'inline-flex', gap: '18px', animation: 'playlistMarquee 9s linear infinite' }}>
+                                                                <span>{playlistTitle}</span>
+                                                                <span>{playlistTitle}</span>
+                                                            </div>
+                                                        ) : (
+                                                            <span style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'top' }}>{playlistTitle}</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {isHost && p.id !== hostId && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); kickPlayer(p.id) }}
+                                                style={{
+                                                    color: 'var(--error)',
+                                                    padding: isDenseRoster ? '5px' : '6px',
+                                                    borderRadius: isDenseRoster ? '9px' : '10px',
+                                                    border: '1px solid rgba(239,68,68,0.24)',
+                                                    background: 'rgba(239,68,68,0.08)',
+                                                    flexShrink: 0
+                                                }}
+                                            >
+                                                <XCircle size={isDenseRoster ? 13 : 14} />
+                                            </button>
+                                        )}
+
+                                        {p.is_importing && (
+                                            <div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                                                    <span>Importing</span>
+                                                    <span>‎ {progress}%</span>
+                                                </div>
+                                                <div style={{
+                                                    height: '8px',
+                                                    width: '100%',
+                                                    background: 'rgba(255,255,255,0.08)',
+                                                    borderRadius: '999px',
+                                                    overflow: 'hidden'
+                                                }}>
+                                                    <div style={{
+                                                        height: '100%',
+                                                        width: `${progress}%`,
+                                                        background: `linear-gradient(90deg, ${progressToColor(progress)}, var(--primary))`,
+                                                        transition: 'width 0.3s ease-out, background 0.3s ease-out'
+                                                    }} />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )
+                            })}
+                        </div>
+
+                        {selectedPlayer && (
+                            <UserPopover
+                                isOpen={!!selectedPlayer}
+                                targetUser={selectedPlayer}
+                                onClose={closeUserMenu}
+                                currentUserProfileId={profile?.id}
+                                anchorPoint={menuAnchor || undefined}
+                            />
+                        )}
                     </div>
-                    {isHost ? (
-                        <button onClick={handleDeleteClick} style={{ display: 'flex', gap: '8px', padding: '8px 16px', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: '99px', alignItems: 'center', fontSize: '0.9rem' }}><LogOut size={16} /> Delete Room</button>
-                    ) : (
-                        <button onClick={leaveRoom} style={{ display: 'flex', gap: '8px', padding: '8px 16px', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: '99px', alignItems: 'center', fontSize: '0.9rem' }}><LogOut size={16} /> Leave</button>
+
+                    {profile && (
+                        <div className="glass-panel" style={{ padding: '16px', minHeight: 0, display: 'flex', flexDirection: 'column', flex: '0 0 240px' }}>
+                            <LobbyChat
+                                roomCode={roomCode}
+                                userId={profile.id}
+                                username={profile.username}
+                                avatarUrl={profile.avatar_url}
+                            />
+                        </div>
                     )}
                 </div>
 
-                {/* IMPORT SECTION */}
-                <div className="glass-panel" style={{ padding: '20px', background: 'rgba(255,255,255,0.03)', overflow: 'visible' }}>
+                <div className="glass-panel" style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto', minWidth: 0, minHeight: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                        <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
+                                <SettingsIcon className="text-primary" size={24} color="var(--primary)" />
+                                <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0 }}>Match Setup</h2>
+                            </div>
+                        </div>
+                        {isHost ? (
+                            <button onClick={handleDeleteClick} style={{ display: 'flex', gap: '8px', padding: '10px 16px', color: 'var(--error)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '999px', alignItems: 'center', fontSize: '0.9rem', background: 'rgba(239,68,68,0.08)' }}><LogOut size={16} /> Delete Room</button>
+                        ) : (
+                            <button onClick={leaveRoom} style={{ display: 'flex', gap: '8px', padding: '10px 16px', color: 'var(--error)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: '999px', alignItems: 'center', fontSize: '0.9rem', background: 'rgba(239,68,68,0.08)' }}><LogOut size={16} /> Leave Lobby</button>
+                        )}
+                    </div>
+
+                    {/* IMPORT SECTION */}
+                    <div className="glass-panel" style={{ padding: '16px', background: 'linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))', overflow: 'visible' }}>
                     <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span>Import Playlist</span>
                         </div>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Total: {totalSongs}</span>
                     </h3>
 
-                    {hasImported ? (
+                        {hasImported ? (
                         <div style={{
                             background: 'rgba(46, 242, 160, 0.12)', border: '1px solid rgba(46, 242, 160, 0.25)',
                             borderRadius: '8px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', color: 'var(--primary)'
@@ -506,8 +735,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                 </button>
                             )}
                         </div>
-                    ) : (
-                        <div style={{ display: 'flex', gap: '12px' }}>
+                        ) : (
+                            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                             <input
                                 type="text" placeholder="Spotify or YouTube URL..."
                                 value={importUrl} onChange={(e) => setImportUrl(e.target.value)}
@@ -526,8 +755,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                                 className="import-progress__ring"
                                                 style={{
                                                     ['--progress' as any]: importProgress,
-                                                    borderTopColor: `hsl(${importProgress * 1.2}, 100%, 45%)`,
-                                                    borderLeftColor: `hsl(${importProgress * 1.2}, 100%, 45%)`,
+                                                    borderTopColor: progressToColor(importProgress),
+                                                    borderLeftColor: progressToColor(importProgress),
                                                     borderRightColor: 'transparent',
                                                     borderBottomColor: 'transparent'
                                                 }}
@@ -563,103 +792,141 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                     </div>
                                 )}
                             </div>
-                        </div>
-                    )}
-                </div>
+                            </div>
+                        )}
+                    </div>
 
-                {/* GAME MODES */}
-                <div>
-                    <label style={{ display: 'block', marginBottom: '12px', fontWeight: 600 }}>Game Mode</label>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                    {/* GAME MODES */}
+                    <div className="glass-panel" style={{ padding: '16px', background: 'rgba(255,255,255,0.03)' }}>
+                        <label style={{ display: 'block', marginBottom: '14px', fontWeight: 700 }}>Game Mode</label>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
                         {modes.map(mode => (
                             <button
                                 key={mode.id}
                                 onClick={() => updateSettings({ mode: mode.id as any })}
                                 disabled={!isHost}
+                                title={mode.description}
+                                aria-label={`${mode.label}. ${mode.description}`}
                                 style={{
                                     padding: '12px 8px', borderRadius: '12px',
-                                    background: settings.mode === mode.id ? 'var(--primary)' : 'rgba(255,255,255,0.04)',
-                                    color: settings.mode === mode.id ? '#04110b' : 'var(--text-muted)',
-                                    border: '1px solid', borderColor: settings.mode === mode.id ? 'var(--primary)' : 'rgba(255,255,255,0.1)',
+                                    background: settings.mode === mode.id ? 'rgba(46,242,160,0.18)' : 'rgba(255,255,255,0.04)',
+                                    color: settings.mode === mode.id ? 'white' : 'var(--text-muted)',
+                                    border: '1px solid', borderColor: settings.mode === mode.id ? 'rgba(46,242,160,0.75)' : 'rgba(255,255,255,0.1)',
                                     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
-                                    transition: 'all 0.2s', opacity: (!isHost && settings.mode !== mode.id) ? 0.5 : 1
+                                    transition: 'all 0.2s',
+                                    opacity: (!isHost && settings.mode !== mode.id) ? 0.5 : 1,
+                                    transform: settings.mode === mode.id ? 'scale(1.02)' : 'scale(1)',
+                                    boxShadow: settings.mode === mode.id ? '0 0 0 1px rgba(46,242,160,0.25), 0 0 24px rgba(46,242,160,0.22)' : 'none'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!isHost || settings.mode === mode.id) return
+                                    e.currentTarget.style.transform = 'translateY(-2px) scale(1.01)'
+                                    e.currentTarget.style.boxShadow = '0 8px 20px rgba(0,0,0,0.28)'
+                                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.24)'
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!isHost || settings.mode === mode.id) return
+                                    e.currentTarget.style.transform = 'scale(1)'
+                                    e.currentTarget.style.boxShadow = 'none'
+                                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
                                 }}
                             >
                                 <mode.icon size={20} />
                                 <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{mode.label}</span>
                             </button>
                         ))}
+                        </div>
                     </div>
-                </div>
 
-                {/* SLIDERS */}
-                <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <label>Rounds</label>
-                        <span style={{ fontWeight: 'bold' }}>{settings.rounds}</span>
-                    </div>
-                    <input
-                        type="range" min="5" max="50" step="5"
-                        value={settings.rounds}
-                        onChange={(e) => updateSettings({ rounds: parseInt(e.target.value) })}
-                        disabled={!isHost}
-                        style={{ width: '100%', accentColor: 'var(--primary)', height: '6px', borderRadius: '3px', cursor: 'pointer' }}
-                    />
-                </div>
+                    {/* SLIDERS */}
+                    <div className="glass-panel" style={{ padding: '16px', background: 'rgba(255,255,255,0.03)', display: 'grid', gap: '14px' }}>
+                        <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                <label>Rounds</label>
+                                <span style={{ fontWeight: 'bold' }}>{settings.rounds}</span>
+                            </div>
+                            <input
+                                type="range" min="5" max="50" step="5"
+                                value={settings.rounds}
+                                onChange={(e) => updateSettings({ rounds: parseInt(e.target.value) })}
+                                disabled={!isHost}
+                                style={{ width: '100%', accentColor: 'var(--primary)', height: '6px', borderRadius: '3px', cursor: 'pointer' }}
+                            />
+                        </div>
 
-                <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <label>Time per Round</label>
-                        <span style={{ fontWeight: 'bold' }}>{settings.time}s</span>
-                    </div>
-                    <input
-                        type="range" min="5" max="30" step="5"
-                        value={settings.time}
-                        onChange={(e) => updateSettings({ time: parseInt(e.target.value) })}
-                        disabled={!isHost}
-                        style={{ width: '100%', accentColor: 'var(--primary)' }}
-                    />
-                </div>
+                        <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                <label>Time per Round</label>
+                                <span style={{ fontWeight: 'bold' }}>{settings.time}s</span>
+                            </div>
+                            <input
+                                type="range" min="5" max="30" step="5"
+                                value={settings.time}
+                                onChange={(e) => updateSettings({ time: parseInt(e.target.value) })}
+                                disabled={!isHost}
+                                style={{ width: '100%', accentColor: 'var(--primary)' }}
+                            />
+                        </div>
 
-                {/* NO DUPLICATES TOGGLE */}
-                <div style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    cursor: isHost ? 'pointer' : 'default',
-                    opacity: isHost ? 1 : 0.5
-                }}
-                    onClick={() => isHost && updateSettings({ no_duplicates: !settings.no_duplicates })}
-                >
-                    <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>No Duplicates</span>
-                    <div style={{
-                        width: '36px', height: '20px', borderRadius: '10px', position: 'relative', flexShrink: 0,
-                        background: settings.no_duplicates ? 'var(--primary)' : 'rgba(255,255,255,0.12)',
-                        transition: 'background 0.2s ease'
-                    }}>
                         <div style={{
-                            position: 'absolute', top: '3px',
-                            left: settings.no_duplicates ? '19px' : '3px',
-                            width: '14px', height: '14px', borderRadius: '50%',
-                            background: 'white', transition: 'left 0.2s ease'
-                        }} />
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            cursor: isHost ? 'pointer' : 'default',
+                            opacity: isHost ? 1 : 0.5
+                        }}
+                            onClick={() => isHost && updateSettings({ no_duplicates: !settings.no_duplicates })}
+                        >
+                            <div>
+                                <div style={{ fontWeight: 700 }}>No Duplicates</div>
+                            </div>
+                            <div style={{
+                                width: '44px', height: '24px', borderRadius: '999px', position: 'relative', flexShrink: 0,
+                                background: settings.no_duplicates ? 'var(--primary)' : 'rgba(255,255,255,0.12)',
+                                transition: 'background 0.2s ease'
+                            }}>
+                                <div style={{
+                                    position: 'absolute', top: '3px',
+                                    left: settings.no_duplicates ? '23px' : '3px',
+                                    width: '18px', height: '18px', borderRadius: '50%',
+                                    background: 'white', transition: 'left 0.2s ease'
+                                }} />
+                            </div>
+                        </div>
                     </div>
-                </div>
 
-                <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'center' }}>
+                    <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'center' }}>
                     {isHost ? (
                         <button
                             onClick={startGame}
-                            disabled={isStarting || players.some(p => p.is_importing)}
+                            disabled={!canHostStart}
                             className="btn-primary"
                             style={{
                                 padding: '16px 48px', fontSize: '1.2rem', width: '100%',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
-                                minHeight: '60px', height: '60px'
+                                minHeight: '60px', height: '60px',
+                                opacity: canHostStart ? 1 : 0.55,
+                                background: canHostStart ? undefined : 'rgba(148,163,184,0.18)',
+                                borderColor: canHostStart ? undefined : 'rgba(148,163,184,0.28)',
+                                color: canHostStart ? undefined : 'rgba(255,255,255,0.75)',
+                                cursor: canHostStart ? 'pointer' : 'not-allowed'
                             }}
+                            title={
+                                totalSongs === 0
+                                    ? 'Import a playlist before starting'
+                                    : readyPlayersCount === 0
+                                        ? 'At least one player must be ready'
+                                        : players.some(p => p.is_importing)
+                                            ? 'Wait for playlist imports to finish'
+                                            : 'Start game'
+                            }
                         >
                             {isStarting ? (
                                 <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> {loadingMsg}</>
                             ) : players.some(p => p.is_importing) ? (
                                 <><RadialProgress progress={importProgress} size={20} strokeWidth={3} /> Importing playlist...</>
+                            ) : totalSongs === 0 ? (
+                                'Import a playlist to start'
+                            ) : readyPlayersCount === 0 ? (
+                                'Need one ready player'
                             ) : (
                                 <><Play fill="currentColor" /> START GAME</>
                             )}
@@ -687,9 +954,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                             )}
                         </button>
                     )}
+                    </div>
                 </div>
-
-
             </div>
 
             {/* Failed Tracks Modal */}

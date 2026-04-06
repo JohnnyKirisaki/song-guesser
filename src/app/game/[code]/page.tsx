@@ -3,12 +3,12 @@
 import { useEffect, useState, useRef, useMemo, type MouseEvent, type SyntheticEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { db } from '@/lib/firebase'
-import { ref, onValue, update, get, serverTimestamp, onDisconnect } from 'firebase/database'
+import { ref, onValue, update, get, serverTimestamp, onDisconnect, remove } from 'firebase/database'
 import { useUser } from '@/context/UserContext'
 import { GameState, SongItem } from '@/lib/game-logic'
 import { useVolume } from '@/context/VolumeContext'
 
-import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward, HelpCircle, Mic } from 'lucide-react'
+import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward, HelpCircle, Mic, LogOut } from 'lucide-react'
 import ProgressBar from '@/components/ProgressBar'
 import { soundManager } from '@/lib/sounds'
 import { processNextRound } from '@/lib/game-round-manager'
@@ -1741,6 +1741,19 @@ export default function GamePage() {
         who_sang_that: 'Who Sang That?',
         album_art: 'Album Art',
     } as Record<string, string>)[mode] || 'BeatBattle'
+
+    const leaveGame = async () => {
+        try {
+            if (profile?.id) {
+                await remove(ref(db, `rooms/${code}/players/${profile.id}`))
+            }
+        } catch (e) {
+            console.error('[Game] Failed to leave room:', e)
+        } finally {
+            router.push('/')
+        }
+    }
+
     const sortedDisplayPlayers = [...displayPlayers].sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score
         return (b.sudden_death_score || 0) - (a.sudden_death_score || 0)
@@ -1880,7 +1893,29 @@ export default function GamePage() {
                 <div className="hud-bar">
                     <div className="hud-chip hud-chip--round">
                         <span className="hud-chip__eyebrow">Round</span>
-                        <span className="hud-chip__value">{displayRound} / {roomSettings?.rounds}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span className="hud-chip__value">{displayRound} / {roomSettings?.rounds}</span>
+                            <button
+                                onClick={leaveGame}
+                                title="Leave game"
+                                aria-label="Leave game"
+                                style={{
+                                    width: '24px',
+                                    height: '24px',
+                                    borderRadius: '999px',
+                                    border: '1px solid rgba(255,255,255,0.14)',
+                                    background: 'rgba(255,255,255,0.08)',
+                                    color: 'var(--text-main)',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer',
+                                    flexShrink: 0
+                                }}
+                            >
+                                <LogOut size={12} />
+                            </button>
+                        </div>
                         {gameState.is_sudden_death && <span className="round-tag">Sudden Death</span>}
                         {isBulletRound && <span className="round-tag" style={{ background: '#ff4444', color: 'white', borderColor: '#ff4444' }}>Bullet Round</span>}
                     </div>
@@ -2449,10 +2484,10 @@ export default function GamePage() {
                             onContextMenu={(e) => openUserMenu(p, e)}
                         >
                             <div className={`rank-badge${rank <= 3 ? ` rank-badge--${rank}` : ''}`}>#{rank}</div>
-                            <img src={p.avatar_url} style={{ width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0 }} />
+                            <img src={p.avatar_url} style={{ width: '40px', height: '40px', borderRadius: '50%', flexShrink: 0 }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
-                                <div className="player-name" style={{ fontSize: '0.85rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</div>
-                                <div className="player-score" style={{ fontSize: '0.75rem', opacity: 0.7 }}>
+                                <div className="player-name" style={{ fontSize: '0.95rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</div>
+                                <div className="player-score" style={{ fontSize: '0.85rem', opacity: 0.7 }}>
                                     {gameState.is_sudden_death
                                         ? <><AnimatedNumber value={p.sudden_death_score || 0} /> pts (SD)</>
                                         : <><AnimatedNumber value={p.score} /> pts</>

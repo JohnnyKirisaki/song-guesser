@@ -221,7 +221,39 @@ export async function POST(request: Request) {
             }
         }).filter((t: any) => t && t.name && t.artist)
 
-        return NextResponse.json({ tracks })
+        let collectionName: string | null = null
+        let collectionCoverUrl: string | null = null
+
+        if (urlType === 'playlist') {
+            const metaRes = await spotifyFetch(`https://api.spotify.com/v1/playlists/${resourceId}`, accessToken)
+            if (metaRes.ok) {
+                const meta = await metaRes.json()
+                collectionName = meta.name || null
+                collectionCoverUrl = meta.images?.[0]?.url || null
+            }
+        } else if (urlType === 'album') {
+            const metaRes = await spotifyFetch(`https://api.spotify.com/v1/albums/${resourceId}`, accessToken)
+            if (metaRes.ok) {
+                const meta = await metaRes.json()
+                collectionName = meta.name || null
+                collectionCoverUrl = meta.images?.[0]?.url || null
+            }
+        } else if (urlType === 'artist') {
+            const metaRes = await spotifyFetch(`https://api.spotify.com/v1/artists/${resourceId}`, accessToken)
+            if (metaRes.ok) {
+                const meta = await metaRes.json()
+                collectionName = meta.name ? `${meta.name} Essentials` : null
+                collectionCoverUrl = meta.images?.[0]?.url || null
+            }
+        }
+
+        return NextResponse.json({
+            tracks,
+            collection: {
+                name: collectionName,
+                coverUrl: collectionCoverUrl
+            }
+        })
 
     } catch (error: any) {
         console.error('[API] Critical Error:', error)
