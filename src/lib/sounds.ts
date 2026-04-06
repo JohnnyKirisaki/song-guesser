@@ -13,7 +13,8 @@ class SoundManager {
     private audioCache: Record<string, HTMLAudioElement> = {}
     private volume: number = 0.5
     private volumeOverrides: Partial<Record<keyof typeof SOUNDS, number>> = {
-        tick: 0.5
+        tick: 0.5,
+        countdown_tick: 0.3
     }
 
     constructor() {

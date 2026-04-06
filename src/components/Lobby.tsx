@@ -550,9 +550,11 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                                 : 'linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))',
                                             cursor: 'pointer',
                                             transition: 'transform 0.2s ease, background 0.2s ease, border-color 0.2s ease',
-                                            display: 'flex',
+                                            display: 'grid',
+                                            gridTemplateColumns: isHost
+                                                ? `1fr ${isDenseRoster ? '165px' : '200px'} ${isDenseRoster ? '28px' : '30px'}`
+                                                : `1fr ${isDenseRoster ? '165px' : '200px'}`,
                                             alignItems: 'center',
-                                            justifyContent: 'space-between',
                                             gap: isDenseRoster ? '8px' : '10px',
                                             minHeight: isDenseRoster ? '62px' : '74px',
                                             animationDelay: `${idx * 0.07}s`
@@ -589,82 +591,70 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                             </div>
                                         </div>
 
-                                        {/* Playlist column — always rendered so all cards stay the same width */}
-                                        <div style={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: isDenseRoster ? '8px' : '10px',
-                                            flexShrink: 0,
-                                            width: isDenseRoster ? '44%' : '48%',
-                                            marginLeft: 'auto',
-                                            minWidth: 0
-                                        }}>
-                                            {(p.playlist_name || p.playlist_cover_url) ? (<>
-                                                <img
-                                                    src={p.playlist_cover_url || '/placeholder-cover.jpg'}
-                                                    alt={p.playlist_name || 'Playlist cover'}
-                                                    style={{
-                                                        width: isDenseRoster ? '30px' : '36px',
-                                                        height: isDenseRoster ? '30px' : '36px',
-                                                        borderRadius: '9px',
-                                                        objectFit: 'cover',
-                                                        flexShrink: 0
-                                                    }}
-                                                    onError={(e) => { e.currentTarget.src = '/placeholder-cover.jpg' }}
-                                                />
-                                                <div style={{ minWidth: 0, overflow: 'hidden', flex: 1 }}>
-                                                    <div style={{ fontSize: isDenseRoster ? '0.8rem' : '0.9rem', fontWeight: 800, overflow: 'hidden' }}>
-                                                        {shouldScrollPlaylist ? (
-                                                            <div style={{ display: 'flex', width: 'max-content', animation: 'playlistMarquee 9s linear infinite', whiteSpace: 'nowrap' }}>
-                                                                <span style={{ paddingRight: '32px' }}>{playlistTitle}</span>
-                                                                <span style={{ paddingRight: '32px' }}>{playlistTitle}</span>
-                                                            </div>
-                                                        ) : (
-                                                            <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{playlistTitle}</span>
-                                                        )}
+                                        {/* Right section: playlist info or import progress — fixed-width grid column */}
+                                        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                                            {p.is_importing ? (
+                                                <div>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                                                        <span>Importing</span>
+                                                        <span>‎ {progress}%</span>
+                                                    </div>
+                                                    <div style={{ height: '8px', width: '100%', background: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden' }}>
+                                                        <div style={{
+                                                            height: '100%',
+                                                            width: `${progress}%`,
+                                                            background: `linear-gradient(90deg, ${progressToColor(progress)}, var(--primary))`,
+                                                            transition: 'width 0.3s ease-out, background 0.3s ease-out'
+                                                        }} />
                                                     </div>
                                                 </div>
-                                            </>) : (
-                                                <span style={{ fontSize: isDenseRoster ? '0.75rem' : '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>No playlist</span>
-                                            )}
+                                            ) : (p.playlist_name || p.playlist_cover_url) ? (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: isDenseRoster ? '8px' : '10px' }}>
+                                                    <img
+                                                        src={p.playlist_cover_url || '/placeholder-cover.jpg'}
+                                                        alt={p.playlist_name || 'Playlist cover'}
+                                                        style={{
+                                                            width: isDenseRoster ? '30px' : '36px',
+                                                            height: isDenseRoster ? '30px' : '36px',
+                                                            borderRadius: '9px',
+                                                            objectFit: 'cover',
+                                                            flexShrink: 0
+                                                        }}
+                                                        onError={(e) => { e.currentTarget.src = '/placeholder-cover.jpg' }}
+                                                    />
+                                                    <div style={{ minWidth: 0, overflow: 'hidden', flex: 1 }}>
+                                                        <div style={{ fontSize: isDenseRoster ? '0.8rem' : '0.9rem', fontWeight: 800, overflow: 'hidden' }}>
+                                                            {shouldScrollPlaylist ? (
+                                                                <div style={{ display: 'flex', width: 'max-content', animation: 'playlistMarquee 9s linear infinite', whiteSpace: 'nowrap' }}>
+                                                                    <span style={{ paddingRight: '32px' }}>{playlistTitle}</span>
+                                                                    <span style={{ paddingRight: '32px' }}>{playlistTitle}</span>
+                                                                </div>
+                                                            ) : (
+                                                                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{playlistTitle}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : null}
                                         </div>
 
-                                        {isHost && p.id !== hostId && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); kickPlayer(p.id) }}
-                                                style={{
-                                                    color: 'var(--error)',
-                                                    padding: isDenseRoster ? '5px' : '6px',
-                                                    borderRadius: isDenseRoster ? '9px' : '10px',
-                                                    border: '1px solid rgba(239,68,68,0.24)',
-                                                    background: 'rgba(239,68,68,0.08)',
-                                                    flexShrink: 0
-                                                }}
-                                            >
-                                                <XCircle size={isDenseRoster ? 13 : 14} />
-                                            </button>
-                                        )}
-
-                                        {p.is_importing && (
-                                            <div>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                                                    <span>Importing</span>
-                                                    <span>‎ {progress}%</span>
-                                                </div>
-                                                <div style={{
-                                                    height: '8px',
-                                                    width: '100%',
-                                                    background: 'rgba(255,255,255,0.08)',
-                                                    borderRadius: '999px',
-                                                    overflow: 'hidden'
-                                                }}>
-                                                    <div style={{
-                                                        height: '100%',
-                                                        width: `${progress}%`,
-                                                        background: `linear-gradient(90deg, ${progressToColor(progress)}, var(--primary))`,
-                                                        transition: 'width 0.3s ease-out, background 0.3s ease-out'
-                                                    }} />
-                                                </div>
+                                        {/* Kick slot — always rendered when isHost so the grid column is always present */}
+                                        {isHost && (
+                                            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                                {p.id !== hostId && (
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); kickPlayer(p.id) }}
+                                                        style={{
+                                                            color: 'var(--error)',
+                                                            padding: isDenseRoster ? '5px' : '6px',
+                                                            borderRadius: isDenseRoster ? '9px' : '10px',
+                                                            border: '1px solid rgba(239,68,68,0.24)',
+                                                            background: 'rgba(239,68,68,0.08)'
+                                                        }}
+                                                    >
+                                                        <XCircle size={isDenseRoster ? 13 : 14} />
+                                                    </button>
+                                                )}
                                             </div>
                                         )}
                                     </div>
