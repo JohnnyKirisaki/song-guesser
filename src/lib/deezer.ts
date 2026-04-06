@@ -113,6 +113,62 @@ async function fetchWithRetry(url: string, retries = 4): Promise<any> {
     }
 }
 
+// iTunes Search API Fallback
+// Free, no API key, returns 30-second AAC previews
+async function resolveViaItunes(track: { artist: string, title: string, durationMs?: number, album?: string }): Promise<ResolvedTrack['deezer'] | null> {
+    try {
+        const query = `${track.artist} ${track.title}`
+        const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=10`
+        const res = await fetch(url, { cache: 'no-store' })
+        if (!res.ok) return null
+
+        const data = await res.json()
+        const results: any[] = (data?.results || []).filter((r: any) => r.previewUrl && r.kind === 'song')
+        if (results.length === 0) return null
+
+        let bestMatch: any = null
+        let bestScore = -100
+        let bestReasons: string[] = []
+
+        for (const result of results) {
+            const candidateInfo = {
+                title: result.trackName,
+                artist: result.artistName,
+                duration: Math.round((result.trackTimeMillis || 0) / 1000),
+                rank: 0,
+                contributors: []
+            }
+            const { score, reasons } = scoreTrackMatch(track, candidateInfo)
+            if (score > bestScore) {
+                bestScore = score
+                bestReasons = reasons
+                bestMatch = result
+            }
+        }
+
+        const artistMatched = bestReasons.some(r => r.includes('artist'))
+        if (!bestMatch || bestScore <= 40 || !artistMatched) return null
+
+        // Upgrade artwork from 100x100 to 600x600
+        const coverUrl = (bestMatch.artworkUrl100 || '').replace('100x100bb', '600x600bb')
+
+        console.log(`[iTunes] Fallback HIT: ${track.artist} - ${track.title} (score: ${bestScore})`)
+        return {
+            id: `itunes_${bestMatch.trackId}`,
+            title: bestMatch.trackName,
+            artist: bestMatch.artistName,
+            preview_url: bestMatch.previewUrl,
+            cover_url: coverUrl,
+            duration: Math.round((bestMatch.trackTimeMillis || 0) / 1000),
+            link: bestMatch.trackViewUrl || '',
+            album_title: bestMatch.collectionName || undefined
+        }
+    } catch (e) {
+        console.warn('[iTunes] Fallback failed:', e)
+        return null
+    }
+}
+
 // Single Track Resolver
 export async function resolveSingleTrack(track: { artist: string, title: string, durationMs?: number, isrc?: string, album?: string, year?: string }): Promise<ResolvedTrack> {
     // Generate valid Firebase path key (firebase keys cannot contain . # $ [ ] or line breaks)
@@ -264,6 +320,20 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
         } catch (e: any) {
             console.warn(`[Resolver] ISRC Lookup Failed for ${track.isrc}:`, e.message)
             if (isQuotaExceededError(e)) {
+                const itunesMatch = await resolveViaItunes(track)
+                if (itunesMatch) {
+                    const result: ResolvedTrack = {
+                        input: track,
+                        resolved: true,
+                        deezer: itunesMatch,
+                        score: 80,
+                        warnings: ['iTunes Fallback (Deezer quota exceeded)'],
+                        candidates: [],
+                        debug: { queriesUsed, candidatesFound: 1 }
+                    }
+                    set(ref(db, dbCachePath), result)
+                    return result
+                }
                 const result: ResolvedTrack = {
                     input: track,
                     resolved: false,
@@ -432,17 +502,30 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
             debug: { queriesUsed, candidatesFound: candidates.length }
         }
     } else {
-        const failReason = !bestMatch
-            ? (lastError ? `Error: ${lastError}` : 'No candidates found')
-            : !artistMatched ? 'Artist mismatch'
-                : 'Score too low'
-        result = {
-            input: track,
-            resolved: false,
-            score: bestScore,
-            warnings: bestReasons.length > 0 ? [...bestReasons, failReason] : [failReason],
-            candidates: debugCandidates,
-            debug: { queriesUsed, candidatesFound: candidates.length }
+        const itunesMatch = await resolveViaItunes(track)
+        if (itunesMatch) {
+            result = {
+                input: track,
+                resolved: true,
+                deezer: itunesMatch,
+                score: 80,
+                warnings: ['iTunes Fallback'],
+                candidates: debugCandidates,
+                debug: { queriesUsed, candidatesFound: candidates.length }
+            }
+        } else {
+            const failReason = !bestMatch
+                ? (lastError ? `Error: ${lastError}` : 'No candidates found')
+                : !artistMatched ? 'Artist mismatch'
+                    : 'Score too low'
+            result = {
+                input: track,
+                resolved: false,
+                score: bestScore,
+                warnings: bestReasons.length > 0 ? [...bestReasons, failReason] : [failReason],
+                candidates: debugCandidates,
+                debug: { queriesUsed, candidatesFound: candidates.length }
+            }
         }
     }
 
