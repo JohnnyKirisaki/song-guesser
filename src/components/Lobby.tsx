@@ -432,7 +432,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
             <style jsx global>{`
                 @keyframes playlistMarquee {
                     0% { transform: translateX(0); }
-                    100% { transform: translateX(calc(-100% - 18px)); }
+                    100% { transform: translateX(-50%); }
                 }
             `}</style>
             <div className="glass-panel" style={{
@@ -589,15 +589,17 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                             </div>
                                         </div>
 
-                                        {(p.playlist_name || p.playlist_cover_url) && (
-                                            <div style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: isDenseRoster ? '8px' : '10px',
-                                                flexShrink: 0,
-                                                width: isDenseRoster ? '44%' : '48%',
-                                                marginLeft: 'auto'
-                                            }}>
+                                        {/* Playlist column — always rendered so all cards stay the same width */}
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: isDenseRoster ? '8px' : '10px',
+                                            flexShrink: 0,
+                                            width: isDenseRoster ? '44%' : '48%',
+                                            marginLeft: 'auto',
+                                            minWidth: 0
+                                        }}>
+                                            {(p.playlist_name || p.playlist_cover_url) ? (<>
                                                 <img
                                                     src={p.playlist_cover_url || '/placeholder-cover.jpg'}
                                                     alt={p.playlist_name || 'Playlist cover'}
@@ -610,20 +612,22 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                                     }}
                                                     onError={(e) => { e.currentTarget.src = '/placeholder-cover.jpg' }}
                                                 />
-                                                <div style={{ minWidth: 0, overflow: 'hidden', width: '100%' }}>
-                                                    <div style={{ fontSize: isDenseRoster ? '0.8rem' : '0.9rem', fontWeight: 800, whiteSpace: 'nowrap' }}>
+                                                <div style={{ minWidth: 0, overflow: 'hidden', flex: 1 }}>
+                                                    <div style={{ fontSize: isDenseRoster ? '0.8rem' : '0.9rem', fontWeight: 800, overflow: 'hidden' }}>
                                                         {shouldScrollPlaylist ? (
-                                                            <div style={{ display: 'inline-flex', gap: '18px', animation: 'playlistMarquee 9s linear infinite' }}>
-                                                                <span>{playlistTitle}</span>
-                                                                <span>{playlistTitle}</span>
+                                                            <div style={{ display: 'flex', width: 'max-content', animation: 'playlistMarquee 9s linear infinite', whiteSpace: 'nowrap' }}>
+                                                                <span style={{ paddingRight: '32px' }}>{playlistTitle}</span>
+                                                                <span style={{ paddingRight: '32px' }}>{playlistTitle}</span>
                                                             </div>
                                                         ) : (
-                                                            <span style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', verticalAlign: 'top' }}>{playlistTitle}</span>
+                                                            <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{playlistTitle}</span>
                                                         )}
                                                     </div>
                                                 </div>
-                                            </div>
-                                        )}
+                                            </>) : (
+                                                <span style={{ fontSize: isDenseRoster ? '0.75rem' : '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>No playlist</span>
+                                            )}
+                                        </div>
 
                                         {isHost && p.id !== hostId && (
                                             <button
