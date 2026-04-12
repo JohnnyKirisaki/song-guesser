@@ -92,6 +92,15 @@ export async function processNextRound(
     // If rounds=5, Max Index is 4. Next Round would be 5.
     // So if current_round_index >= 4 (i.e. we just finished round 5), we end.
     if (gameState.current_round_index >= MAX_ROUNDS - 1 && !currentIsSuddenDeath) {
+        if (settings?.mode === 'chill_rating') {
+            await update(ref(db, `rooms/${roomCode}`), {
+                status: 'finished',
+                'game_state/phase': 'end',
+                'game_state/end_time': Date.now()
+            })
+            return
+        }
+
         // Check for ties
         const resolvedGroups = new Set(gameState.resolved_tie_groups || [])
         const tieGroup = getFirstTieGroup(players, resolvedGroups)

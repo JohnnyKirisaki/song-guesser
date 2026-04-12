@@ -3,8 +3,10 @@ import { db } from '@/lib/firebase'
 import { ref, get, update } from 'firebase/database'
 import { SongItem } from '@/lib/game-logic'
 import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
+import { getArtistMetadataBatch } from '@/lib/artist-metadata'
+import { asyncPool } from '@/lib/async-utils'
 
-const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 6
+const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 15
 
 type RoomSong = {
     artist_name?: string
@@ -18,7 +20,7 @@ function getRecentOptionNames(
 ): string[] {
     const recent: string[] = []
 
-    for (let index = Math.max(0, roundIndex - 3); index < roundIndex; index++) {
+    for (let index = Math.max(0, roundIndex - 10); index < roundIndex; index++) {
         const song = secrets[String(index)]
         if (!song?.id) continue
 
@@ -64,26 +66,46 @@ export async function POST(request: Request) {
         const secrets = secretsSnap.val() as Record<string, SongItem>
         const existingExtras = roomData.who_sang_that_extras || {}
         const lyricsCache = roomData.lyrics_cache || {}
-        const artistPool = Array.from(new Map(
-            (Object.values(roomData.songs || {}) as RoomSong[])
-                .map((song: RoomSong) => ({
-                    name: song.artist_name?.trim() || '',
-                    spotify_artist_id: song.spotify_artist_id ?? null
-                }))
-                .filter((artist) => !!artist.name)
-                .map((artist) => [artist.name.toLowerCase(), artist])
-        ).values())
+        
+        // --- START LOBBY INTELLIGENCE ---
+        const roomSongs = Object.values(roomData.songs || {}) as any[]
+        const artistGroups = new Map<string, { name: string; spotify_artist_id?: string | null; titles: string[] }>()
+        roomSongs.forEach(song => {
+            if (!song.artist_name) return
+            const key = song.artist_name.toLowerCase().trim()
+            if (!artistGroups.has(key)) {
+                artistGroups.set(key, { 
+                    name: song.artist_name, 
+                    spotify_artist_id: song.spotify_artist_id || null,
+                    titles: [] 
+                })
+            }
+            artistGroups.get(key)!.titles.push(song.track_name || '')
+        })
+
+        const metadataMap = await getArtistMetadataBatch(Array.from(artistGroups.values()))
+
+        const artistPool = Array.from(artistGroups.values()).map(a => {
+            const meta = metadataMap[a.name]
+            return {
+                name: a.name,
+                spotify_artist_id: a.spotify_artist_id ?? null,
+                _lang: meta?.lang || 'en',
+                _genres: meta?.genres || []
+            }
+        })
+        // --- END LOBBY INTELLIGENCE ---
 
         const updates: Record<string, unknown> = {}
         const hydratedSongIds: string[] = []
 
-        for (const roundIndex of normalizedIndices) {
+        await asyncPool(3, normalizedIndices, async (roundIndex: number) => {
             const song = secrets[String(roundIndex)]
-            if (!song?.id) continue
+            if (!song?.id) return
 
             const existing = existingExtras[song.id]
             const hasOptions = Array.isArray(existing?.options) && existing.options.length > 0
-            if (hasOptions) continue
+            if (hasOptions) return
 
             const cachedLyrics = typeof lyricsCache[song.id] === 'string' ? lyricsCache[song.id] : null
             const recentOptionNames = getRecentOptionNames(secrets, existingExtras, roundIndex)
@@ -95,7 +117,7 @@ export async function POST(request: Request) {
             }
 
             hydratedSongIds.push(song.id)
-        }
+        })
 
         if (Object.keys(updates).length > 0) {
             await update(ref(db), updates)

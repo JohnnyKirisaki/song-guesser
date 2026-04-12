@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/firebase'
-import { ref, update } from 'firebase/database'
+import { ref, get, update } from 'firebase/database'
 import { MaskedSongItem, prepareGamePayload, SongItem } from '@/lib/game-logic'
 import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
+import { getArtistMetadataBatch } from '@/lib/artist-metadata'
+import { asyncPool } from '@/lib/async-utils'
 
-const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 6
+const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 15
 
 export async function POST(request: Request) {
     try {
@@ -80,12 +82,11 @@ export async function POST(request: Request) {
 
         updates[`room_secrets/${roomCode}`] = secrets
 
-        // 3. Lyrics Handling (Server Side Prefetch)
+        // 3. Lyrics Handling (Server Side Prefetch) - ALL ROUNDS PARALLEL
         if (settings.mode === 'lyrics_only') {
             const lyricsUpdates: Record<string, string> = {}
-            const initialBatch = playlist.slice(0, 3)
-
-            await Promise.all(initialBatch.map(async (song) => {
+            
+            await asyncPool(3, playlist, async (song: SongItem) => {
                 try {
                     const apiUrl = new URL(request.url).origin + `/api/lyrics?artist=${encodeURIComponent(song.artist_name)}&title=${encodeURIComponent(song.track_name)}`
                     const res = await fetch(apiUrl)
@@ -94,29 +95,55 @@ export async function POST(request: Request) {
                         lyricsUpdates[`rooms/${roomCode}/lyrics_cache/${song.id}`] = data.lyrics
                     }
                 } catch {
-                    // Ignore prefetch failures and rely on reveal-time recovery.
+                    // Ignore prefetch failures
                 }
-            }))
+            })
 
             Object.entries(lyricsUpdates).forEach(([path, val]) => {
                 updates[path] = val
             })
         }
 
-        // 3b. Who Sang That - build lyrics excerpts + artist photo options
+        // 3b. Who Sang That - Parallel Generation
         if (settings.mode === 'who_sang_that') {
-            const artistPool = Array.from(new Map(
-                playlist
-                    .map(song => ({
-                        name: song.artist_name,
-                        spotify_artist_id: song.spotify_artist_id ?? null
-                    }))
-                    .filter((artist) => !!artist.name)
-                    .map((artist) => [artist.name.toLowerCase(), artist])
-            ).values())
+            // Fetch ALL songs in the room to have a wider distractor pool
+            const roomSongsSnap = await get(ref(db, `rooms/${roomCode}/songs`))
+            const roomSongs = Object.values(roomSongsSnap.val() || {}) as SongItem[]
+
+            // Group by artist to gather titles for language inference
+            const artistGroups = new Map<string, { name: string; spotify_artist_id?: string | null; titles: string[] }>()
+            roomSongs.forEach(song => {
+                if (!song.artist_name) return
+                const key = song.artist_name.toLowerCase().trim()
+                if (!artistGroups.has(key)) {
+                    artistGroups.set(key, { 
+                        name: song.artist_name, 
+                        spotify_artist_id: song.spotify_artist_id || null,
+                        titles: [] 
+                    })
+                }
+                artistGroups.get(key)!.titles.push(song.track_name)
+            })
+
+            // Enrich with Metadata (Persistent Cache + Spotify + Inference)
+            const metadataMap = await getArtistMetadataBatch(Array.from(artistGroups.values()))
+
+            const artistPool = Array.from(artistGroups.values()).map(a => {
+                const meta = metadataMap[a.name]
+                return {
+                    name: a.name,
+                    spotify_artist_id: a.spotify_artist_id ?? null,
+                    _lang: meta?.lang || 'en',
+                    _genres: meta?.genres || []
+                }
+            })
+            
+            // To maintain the 'recentOptionNames' logic while parallelizing, 
+            // we can still build in batches, or just accept slightly looser deduplication for speed.
+            // Speed is the priority here.
             const recentOptionNames: string[] = []
 
-            for (const song of playlist) {
+            await asyncPool(3, playlist, async (song: SongItem) => {
                 const cached = updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] as string | undefined
                 const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cached ?? null, recentOptionNames)
 
@@ -126,11 +153,16 @@ export async function POST(request: Request) {
 
                 updates[`rooms/${roomCode}/who_sang_that_extras/${song.id}`] = extra
 
-                recentOptionNames.push(...extra.options.map(option => option.name))
+                // Note: sequential recent update is lost in true parallel, but for batches of 3 it's acceptable.
+                extra.options.forEach(opt => {
+                    if (!recentOptionNames.includes(opt.name)) {
+                        recentOptionNames.push(opt.name)
+                    }
+                })
                 if (recentOptionNames.length > WHO_SANG_THAT_RECENT_OPTION_LIMIT) {
                     recentOptionNames.splice(0, recentOptionNames.length - WHO_SANG_THAT_RECENT_OPTION_LIMIT)
                 }
-            }
+            })
         }
 
         // 4. Commit to Firebase

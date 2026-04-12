@@ -228,6 +228,11 @@ export async function POST(request: Request) {
                         isSuddenDeath
                     )
                     points = scoreData.points
+                } else if (mode === 'chill_rating') {
+                    // Chill Rating: no points, but we save the rating (1-10) which is stored in title
+                    correctTitle = false
+                    correctArtist = false
+                    points = 0
                 } else {
                     const scoreData = calculateScore(
                         { artist: g.artist, title: g.title },

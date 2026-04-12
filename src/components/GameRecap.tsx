@@ -64,6 +64,8 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     const [popoverAnchor, setPopoverAnchor] = useState<{ x: number, y: number } | null>(null)
     const [nextRoomCode, setNextRoomCode] = useState<string | null>(null)
     const [creatingRoom, setCreatingRoom] = useState(false)
+    const [personalRankings, setPersonalRankings] = useState<{ song: RoundHistory, rating: number }[]>([])
+    const [mode, setMode] = useState<string>('normal')
 
     // Listen for Play Again (Next Room)
     useEffect(() => {
@@ -214,13 +216,23 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
                 const data = snapshot.val()
                 const history = Object.values(data.round_history || {}) as RoundHistory[]
                 const settings = data.settings || {}
-                const mode = settings.mode || 'normal'
-                const isIdentityMode = mode === 'guess_who' || mode === 'who_sang_that'
+                const currentMode = settings.mode || 'normal'
+                setMode(currentMode)
+                const isIdentityMode = currentMode === 'guess_who' || currentMode === 'who_sang_that'
 
                 if (!history.length) {
                     setStats(fallbackStats)
                     setLoading(false)
                     return
+                }
+
+                if (currentMode === 'chill_rating') {
+                    const myRankings = history.map(round => {
+                        const myGuess = (round.guesses || []).find(g => g.user_id === profile?.id)
+                        const rating = parseInt(myGuess?.guess_title || '0')
+                        return { song: round, rating }
+                    }).sort((a, b) => b.rating - a.rating)
+                    setPersonalRankings(myRankings)
                 }
 
                 const formatSong = (song: RoundHistory) => `${song.track_name} - ${song.artist_name}`
@@ -491,8 +503,34 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
             <h1 className="text-gradient" style={{ fontSize: 'clamp(1.8rem, 6vw, 3rem)', marginBottom: '4px' }}>Game Over</h1>
             <p style={{ color: '#aaa', marginBottom: 'clamp(10px, 2vh, 20px)' }}>What a game! Here are the standings.</p>
 
-            {/* Podium / Draw */}
-            {isDraw && drawPlayers.length > 1 ? (
+            {/* Podium / Draw / Chill Rankings */}
+            {mode === 'chill_rating' ? (
+                <div className="animate-in" style={{ width: '100%', maxWidth: '800px', marginBottom: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ background: '#1db954', color: 'black', padding: '6px 16px', borderRadius: '20px', fontWeight: 800, marginBottom: '16px', fontSize: '0.9rem', letterSpacing: '1px' }}>
+                        YOUR RANKINGS
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
+                        {personalRankings.map((item, idx) => (
+                            <div key={idx} className="glass-panel" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '16px', borderLeft: `4px solid ${item.rating >= 8 ? '#1db954' : item.rating >= 5 ? '#ffc107' : '#ff4c60'}` }}>
+                                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.9rem', color: '#888' }}>
+                                    {idx + 1}
+                                </div>
+                                <img src={item.song.cover_url || '/placeholder-cover.jpg'} style={{ width: '54px', height: '54px', borderRadius: '8px', objectFit: 'cover', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.song.track_name}</div>
+                                    <div style={{ fontSize: '0.85rem', color: '#aaa', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.song.artist_name}</div>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#666', marginBottom: '-2px' }}>RATING</div>
+                                    <div style={{ fontSize: '1.6rem', fontWeight: 900, color: item.rating >= 8 ? '#1db954' : item.rating >= 5 ? '#ffc107' : '#ff4c60' }}>
+                                        {item.rating || '—'}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ) : isDraw && drawPlayers.length > 1 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', marginBottom: '48px' }}>
                     <div style={{ fontWeight: 800, letterSpacing: '2px' }}>DRAW</div>
                     <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -559,18 +597,20 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
             )}
 
             {/* Stats Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', width: '100%', maxWidth: '900px', marginBottom: '24px' }}>
-                {stats.map((stat, i) => (
-                    <div key={i} className="glass-panel" style={{ padding: '18px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animationDelay: `${i * 100} ms` }}>
-                        <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: `${stat.color} 20`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', color: stat.color }}>
-                            <stat.icon size={20} />
+            {mode !== 'chill_rating' && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', width: '100%', maxWidth: '900px', marginBottom: '24px' }}>
+                    {stats.map((stat, i) => (
+                        <div key={i} className="glass-panel" style={{ padding: '18px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animationDelay: `${i * 100} ms` }}>
+                            <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: `${stat.color} 20`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', color: stat.color }}>
+                                <stat.icon size={20} />
+                            </div>
+                            <h3 style={{ color: '#888', textTransform: 'uppercase', fontSize: '0.76rem', letterSpacing: '1px', marginBottom: '6px' }}>{stat.label}</h3>
+                            <div style={{ fontSize: '1.1rem', fontWeight: 'bold', marginBottom: '4px' }}>{stat.value}</div>
+                            {stat.subValue && <div style={{ fontSize: '0.9rem', color: '#666' }}>{stat.subValue}</div>}
                         </div>
-                        <h3 style={{ color: '#888', textTransform: 'uppercase', fontSize: '0.76rem', letterSpacing: '1px', marginBottom: '6px' }}>{stat.label}</h3>
-                        <div style={{ fontSize: '1.1rem', fontWeight: 'bold', marginBottom: '4px' }}>{stat.value}</div>
-                        {stat.subValue && <div style={{ fontSize: '0.9rem', color: '#666' }}>{stat.subValue}</div>}
-                    </div>
-                ))}
-            </div>
+                    ))}
+                </div>
+            )}
 
             {/* Add Friend Prompt */}
             {profile && (() => {

@@ -1,7 +1,7 @@
 import { fetchArtistPhoto, fetchSpotifyArtistPhoto } from './artist-photos'
 import { fetchLyrics } from './lyrics'
+import { detectLanguage, LanguageCode } from './language-detector'
 
-const FALLBACK_ARTISTS = ['Taylor Swift', 'Drake', 'Beyonce', 'Ed Sheeran', 'Ariana Grande', 'The Weeknd', 'Bad Bunny', 'Billie Eilish']
 const FILLER_RE = /^(oh+|ah+|na+|la+|hey+|yeah+|uh+|mm+|hm+|woo+|ay+|yea+|ooh+|bah+|da+|doo+|sha+|bay+|whoa+|hmm+|mmm+|ohh+|yeh+|nah+|aye+|woah+|ooo+)[\s,!?.~\-*]*$/i
 
 export type WhoSangThatOption = {
@@ -22,7 +22,9 @@ type SongLike = {
 
 type ArtistPoolEntry = {
     name: string
-    spotify_artist_id?: string | null
+    spotify_artist_id: string | null
+    _lang?: LanguageCode
+    _genres?: string[]
 }
 
 export function extractWhoSangThatExcerpt(lyrics: string): string[] {
@@ -58,25 +60,54 @@ function fallbackWhoSangThatExcerpt(lyrics: string): string[] {
     return [lines[0], lines[1]]
 }
 
-function chooseImposterArtist(correctArtist: string, artistPool: ArtistPoolEntry[], avoidArtistNames: string[] = []): ArtistPoolEntry {
+function chooseImposterArtist(
+    correctArtist: string,
+    artistPool: ArtistPoolEntry[],
+    lang: LanguageCode = 'en',
+    avoidArtistNames: string[] = [],
+    correctArtistGenres: string[] = []
+): ArtistPoolEntry {
     const normalizedCorrectArtist = correctArtist.toLowerCase().trim()
     const avoidSet = new Set(avoidArtistNames.map(name => name.toLowerCase().trim()).filter(Boolean))
-    const mergedPool = [
-        ...artistPool,
-        ...FALLBACK_ARTISTS.map(name => ({ name, spotify_artist_id: null }))
-    ]
-    const uniquePool = Array.from(new Map(
-        mergedPool
-            .map(artist => ({ name: artist.name.trim(), spotify_artist_id: artist.spotify_artist_id ?? null }))
-            .filter(artist => artist.name)
-            .map(artist => [artist.name.toLowerCase(), artist])
-    ).values())
-    const imposters = uniquePool.filter(artist => artist.name.toLowerCase() !== normalizedCorrectArtist)
-    const preferredImposters = imposters.filter(artist => !avoidSet.has(artist.name.toLowerCase()))
 
-    const pool = preferredImposters.length > 0 ? preferredImposters : imposters
-    if (pool.length === 0) return { name: 'Unknown Artist', spotify_artist_id: null }
-    return pool[Math.floor(Math.random() * pool.length)]
+    // 1. Filter out the correct artist
+    const candidates = artistPool.filter(a => a.name.toLowerCase().trim() !== normalizedCorrectArtist)
+    if (candidates.length === 0) return { name: 'Various Artists', spotify_artist_id: null }
+
+    // 2. Score each candidate based on Language and Genre overlap
+    const scoredCandidates = candidates.map(cand => {
+        let score = 0
+        
+        // Language weight (Most important)
+        if (cand._lang === lang) {
+            score += 100
+        } else if (cand._lang && cand._lang !== lang) {
+            // Strong penalty for known language mismatch
+            score -= 200
+        }
+        
+        // Genre overlap weight
+        if (correctArtistGenres.length > 0 && cand._genres && cand._genres.length > 0) {
+            const overlap = cand._genres.filter(g => correctArtistGenres.includes(g))
+            score += overlap.length * 20
+        }
+
+        // Penalty for recently used distractors
+        if (avoidSet.has(cand.name.toLowerCase().trim())) {
+            score -= 50
+        }
+
+        // Add a tiny bit of randomness to break ties
+        score += Math.random() * 5
+
+        return { cand, score }
+    })
+
+    // Sort by score descending
+    scoredCandidates.sort((a, b) => b.score - a.score)
+
+    // Pick top candidate
+    return scoredCandidates[0].cand
 }
 
 export async function buildWhoSangThatExtra(
@@ -85,30 +116,59 @@ export async function buildWhoSangThatExtra(
     cachedLyrics?: string | null,
     avoidArtistNames: string[] = []
 ): Promise<{ extra: WhoSangThatExtra, lyricsText: string | null }> {
-    const lyricsText = cachedLyrics ?? await fetchLyrics(song.artist_name, song.track_name).catch(() => null)
-    const excerpt = lyricsText
-        ? (() => {
-            const extracted = extractWhoSangThatExcerpt(lyricsText)
-            return extracted.length > 0 ? extracted : fallbackWhoSangThatExcerpt(lyricsText)
-        })()
-        : []
-    const imposter = chooseImposterArtist(song.artist_name, artistPool, avoidArtistNames)
+    const { extra, lyricsText } = await (async () => {
+        const text = cachedLyrics ?? await fetchLyrics(song.artist_name, song.track_name).catch(() => null)
+        const excerpt = text
+            ? (() => {
+                const extracted = extractWhoSangThatExcerpt(text)
+                return extracted.length > 0 ? extracted : fallbackWhoSangThatExcerpt(text)
+            })()
+            : []
+        
+        // DETECT LANGUAGE & GENRE MATCHING
+        const lang = detectLanguage(excerpt.join(' '))
+        
+        // Find correct artist's genres from pool
+        const correctArtistPoolData = artistPool.find(a => a.name.toLowerCase().trim() === song.artist_name.toLowerCase().trim())
+        const genres = correctArtistPoolData?._genres || []
+
+        const imposter = chooseImposterArtist(song.artist_name, artistPool, lang, avoidArtistNames, genres)
+
+        return {
+            lyricsText: text,
+            extra: { excerpt, imposter, lang }
+        }
+    })()
+
+    const imposter = (extra as any).imposter as ArtistPoolEntry
 
     const [correctPhoto, imposterPhoto] = await Promise.all([
-        (song.spotify_artist_id
-            ? fetchSpotifyArtistPhoto(song.spotify_artist_id)
-            : fetchArtistPhoto(song.artist_name)).catch(() => null),
-        (imposter.spotify_artist_id
-            ? fetchSpotifyArtistPhoto(imposter.spotify_artist_id)
-            : fetchArtistPhoto(imposter.name)).catch(() => null)
+        (async () => {
+            if (song.spotify_artist_id) {
+                const p = await fetchSpotifyArtistPhoto(song.spotify_artist_id)
+                if (p) return p
+            }
+            return fetchArtistPhoto(song.artist_name)
+        })().catch(() => null),
+        (async () => {
+            if (imposter.spotify_artist_id) {
+                const p = await fetchSpotifyArtistPhoto(imposter.spotify_artist_id)
+                if (p) return p
+            }
+            return fetchArtistPhoto(imposter.name)
+        })().catch(() => null)
     ])
 
     const correct = { name: song.artist_name, photo: correctPhoto }
     const imposterOption = { name: imposter.name, photo: imposterPhoto }
-    const options = Math.random() < 0.5 ? [correct, imposterOption] : [imposterOption, correct]
+    
+    // Shuffle options 50/50
+    const options = Math.random() < 0.5 
+        ? [correct, imposterOption] 
+        : [imposterOption, correct]
 
     return {
-        extra: { excerpt, options },
+        extra: { excerpt: extra.excerpt, options },
         lyricsText,
     }
 }

@@ -30,7 +30,7 @@ type Player = {
 type RoomSettings = {
     rounds: number
     time: number
-    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'guess_who' | 'who_sang_that' | 'album_art'
+    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'guess_who' | 'who_sang_that' | 'album_art' | 'chill_rating'
     no_duplicates?: boolean
 }
 
@@ -506,7 +506,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         { id: 'lyrics_only', icon: FileText, label: 'Lyrics Mode', description: 'Recognize songs from lyric snippets instead of audio alone.' },
         { id: 'guess_who', icon: HelpCircle, label: 'Who Got The Aux?', description: 'Figure out which player added the revealed song.' },
         { id: 'who_sang_that', icon: Mic, label: 'Who Sang That?', description: 'Identify the vocalist from the performance.' },
-        { id: 'album_art', icon: Image, label: 'Album Art', description: 'Solve the round from the album cover reveal.' }
+        { id: 'album_art', icon: Image, label: 'Album Art', description: 'Solve the round from the album cover reveal.' },
+        { id: 'chill_rating', icon: Star, label: 'Chill Rating', description: 'Sit back and rate songs from 1 to 10. No winners, losers, or leaderboards.' }
     ]
 
     const sortedPlayers = [...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0))

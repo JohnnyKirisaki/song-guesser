@@ -8,7 +8,7 @@ import { useUser } from '@/context/UserContext'
 import { GameState, SongItem } from '@/lib/game-logic'
 import { useVolume } from '@/context/VolumeContext'
 
-import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward, HelpCircle, Mic, LogOut } from 'lucide-react'
+import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward, HelpCircle, Mic, LogOut, Star, Image as ImageIcon } from 'lucide-react'
 import ProgressBar from '@/components/ProgressBar'
 import { soundManager } from '@/lib/sounds'
 import { processNextRound } from '@/lib/game-round-manager'
@@ -476,8 +476,9 @@ export default function GamePage() {
     const isGuessWho = mode === 'guess_who'
     const isWhoSangThat = mode === 'who_sang_that'
     const isAlbumArt = mode === 'album_art'
-    const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat
-    const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat
+    const isChillRating = mode === 'chill_rating'
+    const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat && !isChillRating
+    const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat && !isChillRating
 
     const isAudioExpected = () => {
         if (!gameState || !currentSong) return false
@@ -808,7 +809,14 @@ export default function GamePage() {
         if (isGuessWho) return <HelpCircle size={48} className="glow-icon" />
         if (isWhoSangThat) return <Mic size={48} className="glow-icon" />
         if (gameState?.is_sudden_death) return <Zap size={48} color="#FFD700" className="glow-icon" />
-        return <Music size={48} className="glow-icon" />
+        switch (roomSettings?.mode) {
+            case 'album_art':
+                return <ImageIcon size={80} className="glow-icon" />
+            case 'chill_rating':
+                return <Star size={80} className="glow-icon" />
+            default:
+                return <Music size={80} className="glow-icon" />
+        }
     }
 
     // Reset audio retry state per song to avoid stale "already retried" blocks
@@ -1120,6 +1128,11 @@ export default function GamePage() {
         // FIX: Ensure the player stats update corresponds to the CURRENT round
         if (me.last_round_index !== gameState.current_round_index) {
             console.log('[SFX] Waiting for fresh stats...', { local: me.last_round_index, server: gameState.current_round_index })
+            return
+        }
+
+        if (isChillRating) {
+            lastRevealSoundRoundRef.current = gameState.current_round_index
             return
         }
 
@@ -1749,6 +1762,7 @@ export default function GamePage() {
         guess_who: 'Who Got The Aux?',
         who_sang_that: 'Who Sang That?',
         album_art: 'Album Art',
+        chill_rating: 'Chill Rating',
     } as Record<string, string>)[mode] || 'BeatBattle'
 
     const leaveGame = async () => {
@@ -2004,11 +2018,13 @@ export default function GamePage() {
                         const myResult = players.find(p => p.id === profile?.id)
                         const hasResult = myResult?.last_round_correct_title !== undefined
                         const iGotCorrect = hasResult && (myResult?.last_round_correct_title === true || myResult?.last_round_correct_artist === true)
-                        const glowBoxShadow = isReveal && hasResult
+                        const glowBoxShadow = (isReveal && hasResult && !isChillRating)
                             ? iGotCorrect
                                 ? '0 0 0 2px rgba(29,185,84,0.42), 0 0 22px rgba(29,185,84,0.38), 0 0 44px rgba(29,185,84,0.14)'
                                 : '0 0 0 2px rgba(248,113,113,0.42), 0 0 22px rgba(248,113,113,0.38), 0 0 44px rgba(248,113,113,0.14)'
-                            : undefined
+                            : (isReveal && isChillRating)
+                                ? '0 0 0 2px rgba(255,255,255,0.1), 0 0 20px rgba(255,255,255,0.05)'
+                                : undefined
                         return (
                         <div
                             className={`vinyl-container ${isPlaying ? 'spinning' : ''} ${isReveal ? 'reveal reveal-pop' : ''}`}
@@ -2115,15 +2131,19 @@ export default function GamePage() {
                                     {displayPlayers.map((p, i) => {
                                         const correct = p.last_round_correct_title === true || p.last_round_correct_artist === true
                                         const hasData = p.last_round_correct_title !== undefined
-                                        const symbol = hasData ? (correct ? '✓' : '✕') : '…'
-                                        const borderColor = hasData ? (correct ? '#1ed760' : '#ff4c60') : 'rgba(255,255,255,0.18)'
+                                        const symbol = isChillRating 
+                                            ? (p.last_guess?.title ? `${p.last_guess.title}/10` : '—')
+                                            : (hasData ? (correct ? '✓' : '✕') : '…')
+                                        const borderColor = isChillRating
+                                            ? (p.last_guess?.title ? '#1db954' : 'rgba(255,255,255,0.18)')
+                                            : (hasData ? (correct ? '#1ed760' : '#ff4c60') : 'rgba(255,255,255,0.18)')
 
                                         return (
                                             <div key={p.id} className="reveal-slide" style={{ position: 'relative', flex: '0 0 auto', width: '180px', minWidth: '180px', animationDelay: `${0.35 + i * 0.04}s`, padding: '16px', borderRadius: '24px', border: `1px solid ${borderColor}`, background: 'rgba(255,255,255,0.06)', boxShadow: '0 18px 32px rgba(0,0,0,0.32)', overflow: 'hidden' }}>
                                                 <div style={{ position: 'absolute', top: '12px', left: '12px', fontSize: '0.8rem', fontWeight: 800, color: '#fff', opacity: 0.95 }}>
-                                                    {hasData ? `+${p.last_round_points ?? 0}` : '-'}
+                                                    {isChillRating ? '' : (hasData ? `+${p.last_round_points ?? 0}` : '-')}
                                                 </div>
-                                                <div style={{ position: 'absolute', top: '12px', right: '12px', fontSize: '1.2rem', fontWeight: 800, color: borderColor }}>
+                                                <div style={{ position: 'absolute', top: '12px', right: '12px', fontSize: isChillRating ? '1rem' : '1.2rem', fontWeight: 800, color: borderColor }}>
                                                     {symbol}
                                                 </div>
                                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', paddingTop: '10px' }}>
@@ -2244,6 +2264,72 @@ export default function GamePage() {
                                 </div>
                             )}
 
+                            {/* Chill Rating mode — 10 color-coded buttons */}
+                            {isChillRating && (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px', width: '100%', maxWidth: '600px', marginBottom: '10px' }}>
+                                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'rgba(255,255,255,0.7)', letterSpacing: '0.05em' }}>
+                                        RATE THIS TRACK
+                                    </div>
+                                    <div style={{ 
+                                        display: 'grid', 
+                                        gridTemplateColumns: 'repeat(5, 1fr)', 
+                                        gap: '12px',
+                                        width: '100%'
+                                    }}>
+                                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => {
+                                            const isSelected = guess.title === String(num)
+                                            // Color scale: Red (1) to Yellow (5) to Green (10)
+                                            const hue = ((num - 1) / 9) * 120 // 0 to 120
+                                            const bgColor = `hsl(${hue}, 70%, 50%)`
+                                            
+                                            return (
+                                                <button
+                                                    key={num}
+                                                    onClick={() => {
+                                                        if (hasSubmitted || !canGuess) return
+                                                        const ratingStr = String(num)
+                                                        setGuess({ title: ratingStr, artist: '' })
+                                                        setHasSubmitted(true)
+                                                        // No sound for chill rating
+                                                        const playerRef = ref(db, `rooms/${code}/players/${profile.id}`)
+                                                        update(playerRef, {
+                                                            has_submitted: true,
+                                                            last_guess: { title: ratingStr, artist: '' },
+                                                            submitted_at: serverTimestamp() as any
+                                                        })
+                                                    }}
+                                                    style={{
+                                                        height: '64px',
+                                                        borderRadius: '16px',
+                                                        border: '2px solid transparent',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        fontSize: '1.4rem',
+                                                        fontWeight: 900,
+                                                        cursor: (hasSubmitted || !canGuess) ? 'default' : 'pointer',
+                                                        background: isSelected ? bgColor : 'rgba(255,255,255,0.05)',
+                                                        borderColor: isSelected ? 'white' : 'rgba(255,255,255,0.1)',
+                                                        color: isSelected ? 'white' : bgColor,
+                                                        boxShadow: isSelected ? `0 0 20px ${bgColor}80` : 'none',
+                                                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                                        transform: isSelected ? 'scale(1.05)' : 'scale(1)',
+                                                        opacity: (hasSubmitted && !isSelected) ? 0.5 : 1
+                                                    }}
+                                                >
+                                                    {num}
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
+                                    {hasSubmitted && (
+                                        <div style={{ color: 'var(--primary)', fontWeight: 600, fontSize: '1.1rem', marginTop: '4px' }}>
+                                            Rating locked: {guess.title}/10
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             <div style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                 {showArtistInput && (
                                     <div style={{ position: 'relative' }}>
@@ -2302,7 +2388,7 @@ export default function GamePage() {
                                         disabled={hasSubmitted || !canGuess}
                                     />
                                 )}
-                                {!isGuessWho && !isWhoSangThat && (
+                                {!isGuessWho && !isWhoSangThat && !isChillRating && (
                                     <button
                                         className="btn-primary"
                                         onClick={submitGuess}
@@ -2311,7 +2397,7 @@ export default function GamePage() {
                                         {hasSubmitted ? 'ANSWER SUBMITTED' : 'SUBMIT GUESS'}
                                     </button>
                                 )}
-                                {hasSubmitted && !isGuessWho && !isWhoSangThat && (
+                                {hasSubmitted && !isGuessWho && !isWhoSangThat && !isChillRating && (
                                     <div style={{ color: 'var(--primary)', fontWeight: 600, fontSize: '0.9rem', textAlign: 'center' }}>
                                         Answer locked in!
                                     </div>
@@ -2337,7 +2423,7 @@ export default function GamePage() {
 
                     // Check if correct during reveal
                     let resultClass = ''
-                    if (isReveal && p.last_guess) {
+                    if (isReveal && p.last_guess && !isChillRating) {
                         const correctTitle = p.last_round_correct_title === true
                         const correctArtist = p.last_round_correct_artist === true
                         const isCorrect = correctTitle || correctArtist
@@ -2374,11 +2460,11 @@ export default function GamePage() {
                             {isSubmitter && !isReveal && <Check size={16} className="text-primary" />}
                             {isReveal && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: resultClass === 'correct' ? '#1ed760' : '#e91429' }}>
-                                        {resultClass === 'correct' ? `+${p.last_round_points ?? 0}` : '0'}
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: resultClass === 'correct' ? '#1ed760' : (isChillRating ? '#ccc' : '#e91429') }}>
+                                        {isChillRating ? (p.last_guess?.title ? `${p.last_guess.title}/10` : '—') : (resultClass === 'correct' ? `+${p.last_round_points ?? 0}` : '0')}
                                     </span>
                                     <span style={{ fontSize: '0.9rem' }}>
-                                        {resultClass === 'correct' ? '✅' : '❌'}
+                                        {isChillRating ? (p.last_guess?.title ? '⭐' : '') : (resultClass === 'correct' ? '✅' : '❌')}
                                     </span>
                                 </div>
                             )}
