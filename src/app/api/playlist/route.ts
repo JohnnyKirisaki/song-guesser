@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 
 async function spotifyFetch(url: string, accessToken: string, retries = 4): Promise<Response> {
     for (let i = 0; i < retries; i++) {
-        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } })
+        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' })
         if (res.status === 429) {
             const retryAfter = parseInt(res.headers.get('Retry-After') || '2', 10)
             const wait = Math.min((retryAfter || Math.pow(2, i)) * 1000, 10000)
@@ -13,7 +13,7 @@ async function spotifyFetch(url: string, accessToken: string, retries = 4): Prom
         return res
     }
     // Final attempt without retry
-    return fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } })
+    return fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' })
 }
 
 export async function POST(request: Request) {
@@ -69,6 +69,7 @@ export async function POST(request: Request) {
                 'Authorization': `Basic ${auth}`,
                 'Content-Type': 'application/x-www-form-urlencoded'
             },
+            cache: 'no-store',
             body: 'grant_type=client_credentials'
         })
 

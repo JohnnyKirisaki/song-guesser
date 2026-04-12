@@ -10,6 +10,7 @@ type UserProfile = {
     username: string
     avatar_url: string
     wins?: number
+    saved_playlists?: Array<{ name: string, url: string }>
 }
 
 type UserContextType = {
@@ -95,10 +96,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
             // Save Profile to Realtime Database
             const profileData: UserProfile = {
+                ...(existingProfile || {}),
                 id: currentUser.uid,
                 username,
                 avatar_url: avatarUrl,
-                wins: existingProfile?.wins ?? 0
+                wins: existingProfile?.wins ?? 0,
+                saved_playlists: Array.isArray(existingProfile?.saved_playlists) ? existingProfile.saved_playlists : []
             }
 
             await update(profileRef, profileData)

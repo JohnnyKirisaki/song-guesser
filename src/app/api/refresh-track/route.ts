@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     }
 
     try {
-        const res = await fetch(`https://api.deezer.com/track/${id}`)
+        const res = await fetch(`https://api.deezer.com/track/${id}`, { cache: 'no-store' })
         if (!res.ok) throw new Error('Failed to fetch from Deezer')
 
         const data = await res.json()

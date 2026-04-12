@@ -1,7 +1,6 @@
 
 import { db } from '@/lib/firebase'
-import { ref, update, push, child } from 'firebase/database'
-import { isMatch } from '@/lib/scoring'
+import { ref, update } from 'firebase/database'
 
 import { shuffleArray } from './game-utils'
 
@@ -33,6 +32,7 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
         const res = await fetch('/api/resolve-tracks', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
             body: JSON.stringify({ tracks: metadata, clearLog })
         })
         const data = await res.json()
@@ -86,7 +86,9 @@ async function resolveViaServerBatched(
         allResolved.push(...resolved)
         allFailed.push(...failed)
         processed += chunk.length
-        const pct = Math.min(100, Math.round((processed / total) * 100))
+        const pct = processed >= total
+            ? 100
+            : Math.min(99, Math.floor((processed / total) * 100))
         onProgress?.(pct)
     }
 
@@ -104,7 +106,7 @@ export async function fetchSpotifyData(
     if (isYouTube) {
         // Call our YouTube scraper API
         onProgress?.(5)
-        const res = await fetch(`/api/youtube-playlist?url=${encodeURIComponent(input)}`)
+        const res = await fetch(`/api/youtube-playlist?url=${encodeURIComponent(input)}`, { cache: 'no-store' })
         const data = await res.json()
 
         if (data.error) throw new Error(data.error)
@@ -133,6 +135,7 @@ export async function fetchSpotifyData(
         const res = await fetch('/api/playlist', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
             body: JSON.stringify({ url: input })
         })
         const data = await res.json()
@@ -199,7 +202,7 @@ export async function fetchChartTracks(
 ): Promise<ImportResult> {
     onProgress?.(5)
 
-    const res = await fetch(`/api/charts?chart=${chartKey}`)
+    const res = await fetch(`/api/charts?chart=${chartKey}`, { cache: 'no-store' })
     const data = await res.json()
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch chart')
 

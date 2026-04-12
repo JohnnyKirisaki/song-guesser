@@ -246,7 +246,7 @@ export default function GamePage() {
         const tryRefreshById = async (): Promise<string | null> => {
             if (!isDeezerId) return null
             try {
-                const res = await fetch(`/api/refresh-track?id=${trackId}`)
+                const res = await fetch(`/api/refresh-track?id=${trackId}`, { cache: 'no-store' })
                 const data = await res.json()
                 if (data.preview_url) return data.preview_url.replace(/^http:\/\//i, 'https://')
             } catch (err) {
@@ -261,6 +261,7 @@ export default function GamePage() {
                 const res = await fetch('/api/resolve-tracks', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    cache: 'no-store',
                     body: JSON.stringify({ tracks: [{ artist: song.artist_name, title: song.track_name }] })
                 })
                 const data = await res.json()
@@ -714,7 +715,7 @@ export default function GamePage() {
             }
 
             // Fallback: Fetch API
-            const res = await fetch(`/api/lyrics?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`)
+            const res = await fetch(`/api/lyrics?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`, { cache: 'no-store' })
             const data = await res.json()
             const lyrics = data.lyrics || null
             lyricsCacheRef.current[song.id] = lyrics

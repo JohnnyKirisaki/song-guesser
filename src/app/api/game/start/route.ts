@@ -25,6 +25,35 @@ export async function POST(request: Request) {
             }
         )
 
+        // 1.5 Refresh Deezer Previews before starting the game
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < playlist.length; i += BATCH_SIZE) {
+            const batch = playlist.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(async (song) => {
+                // In your spotify.ts, the Deezer ID is currently being saved to the spotify_uri field
+                if (!song.spotify_uri) return;
+                try {
+                    // Strict 2.5 second timeout to guarantee game start never hangs
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 2500);
+                    
+                    const res = await fetch(`https://api.deezer.com/track/${song.spotify_uri}`, { signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    
+                    if (data.preview) {
+                        song.preview_url = data.preview;
+                        // Ensure the fresh URL is also saved to the main room songs object
+                        updates[`rooms/${roomCode}/songs/${song.id}/preview_url`] = data.preview;
+                    }
+                } catch (e) {
+                    console.error(`Failed to refresh Deezer preview for ID ${song.spotify_uri}`, e);
+                }
+            }));
+        }
+
         // 2. Separate Secrets & Mask Public Data
         const secrets: Record<string, SongItem> = {}
         const maskedPlaylist: MaskedSongItem[] = []

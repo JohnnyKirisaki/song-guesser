@@ -2,7 +2,9 @@
 
 import { useState } from 'react'
 import { useUser } from '@/context/UserContext'
-import { X, Upload, Link as LinkIcon } from 'lucide-react'
+import { X, Upload, Link as LinkIcon, Plus, Trash2 } from 'lucide-react'
+import { db } from '@/lib/firebase'
+import { ref, update } from 'firebase/database'
 
 // Helper: Compress Image to Base64 (Max 150px)
 const compressImage = (file: File): Promise<string> => {
@@ -43,14 +45,47 @@ const compressImage = (file: File): Promise<string> => {
     })
 }
 
+const normalizePlaylistUrl = (raw: string): string => {
+    const value = raw.trim()
+    if (!value) return ''
+
+    try {
+        const parsed = new URL(value)
+        const host = parsed.hostname.toLowerCase()
+
+        // Normalize Spotify playlist links (ignore tracking query params)
+        if (host.includes('spotify.com') && parsed.pathname.includes('/playlist/')) {
+            const match = parsed.pathname.match(/\/playlist\/([a-zA-Z0-9]+)/)
+            if (match?.[1]) return `https://open.spotify.com/playlist/${match[1]}`
+        }
+
+        // Normalize YouTube playlist links to list id
+        if (host.includes('youtube.com') || host.includes('youtu.be')) {
+            const list = parsed.searchParams.get('list')
+            if (list) return `https://www.youtube.com/playlist?list=${list}`
+        }
+
+        return parsed.toString().toLowerCase()
+    } catch {
+        return value.toLowerCase()
+    }
+}
+
 export default function ProfileEditor({ onClose }: { onClose: () => void }) {
-    const { profile, signIn } = useUser()
+    const { profile, signIn, updateProfile } = useUser()
     const [username, setUsername] = useState(profile?.username || '')
 
     const [mode, setMode] = useState<'upload' | 'link'>('upload')
     const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url || '')
     const [file, setFile] = useState<File | null>(null)
     const [loading, setLoading] = useState(false)
+    
+    const [activeTab, setActiveTab] = useState<'account' | 'playlists'>('account')
+    const [newPlaylistUrl, setNewPlaylistUrl] = useState('')
+    const [newPlaylistName, setNewPlaylistName] = useState('')
+    
+    // Derive directly from profile to prevent stale state race conditions
+    const playlists = profile?.saved_playlists || []
 
     // Removed Randomize logic
 
@@ -98,6 +133,29 @@ export default function ProfileEditor({ onClose }: { onClose: () => void }) {
         }
     }
 
+    const handleAddPlaylist = async () => {
+        if (!newPlaylistUrl || !newPlaylistName) return
+        const normalizedNewUrl = normalizePlaylistUrl(newPlaylistUrl)
+        const duplicate = playlists.some(pl => normalizePlaylistUrl(pl.url) === normalizedNewUrl)
+        if (duplicate) return
+
+        const updated = [...playlists, { name: newPlaylistName, url: newPlaylistUrl.trim() }]
+        setNewPlaylistName('')
+        setNewPlaylistUrl('')
+        if (profile?.id) {
+            await update(ref(db, `profiles/${profile.id}`), { saved_playlists: updated })
+            await updateProfile({ saved_playlists: updated })
+        }
+    }
+
+    const handleRemovePlaylist = async (index: number) => {
+        const updated = playlists.filter((_, i) => i !== index)
+        if (profile?.id) {
+            await update(ref(db, `profiles/${profile.id}`), { saved_playlists: updated })
+            await updateProfile({ saved_playlists: updated })
+        }
+    }
+
     return (
         <div style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
@@ -112,24 +170,36 @@ export default function ProfileEditor({ onClose }: { onClose: () => void }) {
                     <X size={24} />
                 </button>
 
-                <h2 style={{ marginBottom: '24px', textAlign: 'center' }}>Edit Profile</h2>
+                <h2 style={{ marginBottom: '16px', textAlign: 'center' }}>Edit Profile</h2>
 
-                <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-                    {/* Avatar Preview */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                        <div style={{
-                            width: '100px', height: '100px', borderRadius: '50%',
-                            background: '#333', overflow: 'hidden', border: '2px solid var(--primary)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative'
-                        }}>
-                            {avatarUrl ? (
-                                <img src={avatarUrl} alt="Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                {/* Header (Avatar & Username) */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                    <div style={{
+                        width: '90px', height: '90px', borderRadius: '50%',
+                        background: '#333', overflow: 'hidden', border: '2px solid var(--primary)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative'
+                    }}>
+                        {avatarUrl ? (
+                            <img src={avatarUrl} alt="Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         ) : (
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No Image</div>
                         )}
-                        </div>
                     </div>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>{profile?.username || 'Player'}</h3>
+                </div>
+
+                {/* Tabs */}
+                <div className="segmented" style={{ marginBottom: '20px' }}>
+                    <button type="button" onClick={() => setActiveTab('account')} className={activeTab === 'account' ? 'active' : ''}>
+                        Account Info
+                    </button>
+                    <button type="button" onClick={() => setActiveTab('playlists')} className={activeTab === 'playlists' ? 'active' : ''}>
+                        Playlists
+                    </button>
+                </div>
+
+                {activeTab === 'account' ? (
+                <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         <label style={{ fontSize: '0.9rem' }}>Username</label>
@@ -189,6 +259,35 @@ export default function ProfileEditor({ onClose }: { onClose: () => void }) {
                         {loading ? 'Saving...' : 'Save Changes'}
                     </button>
                 </form>
+                ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        {/* Playlist List */}
+                        <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {playlists.map((pl, i) => (
+                                <div key={i} className="glass-panel" style={{ padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ minWidth: 0, paddingRight: '12px' }}>
+                                        <div style={{ fontWeight: 600, fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pl.name}</div>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pl.url}</div>
+                                    </div>
+                                    <button onClick={() => handleRemovePlaylist(i)} style={{ color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>
+                                        <Trash2 size={18} />
+                                    </button>
+                                </div>
+                            ))}
+                            {playlists.length === 0 && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', padding: '12px' }}>No saved playlists yet.</div>}
+                        </div>
+
+                        {/* Add New Playlist */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>Add New Playlist</div>
+                            <input type="text" placeholder="Playlist Name (e.g. Pop Hits)" value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} className="ui-input" style={{ fontSize: '0.85rem', padding: '10px' }} />
+                            <input type="url" placeholder="Spotify/YouTube URL" value={newPlaylistUrl} onChange={e => setNewPlaylistUrl(e.target.value)} className="ui-input" style={{ fontSize: '0.85rem', padding: '10px' }} />
+                            <button onClick={handleAddPlaylist} className="btn-primary" disabled={!newPlaylistName || !newPlaylistUrl} style={{ padding: '10px', fontSize: '0.85rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                                <Plus size={16} /> Add to Profile
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     )

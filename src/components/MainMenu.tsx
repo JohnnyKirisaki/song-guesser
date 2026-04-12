@@ -2,10 +2,10 @@
 
 import { useUser } from '@/context/UserContext'
 import { Trophy, Plus, LogIn, Edit2, X, ChevronLeft, Users, ArrowRight } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { db } from '@/lib/firebase' // Firebase DB
-import { ref, set, get, child } from 'firebase/database'
+import { ref, set, get, child, update } from 'firebase/database'
 import { generateRoomCode } from '@/lib/game-utils'
 import ProfileEditor from '@/components/ProfileEditor'
 import FriendList from '@/components/FriendList'

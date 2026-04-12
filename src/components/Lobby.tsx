@@ -3,8 +3,8 @@
 import { useState, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
-import { ref, onValue, update, remove, onDisconnect, serverTimestamp } from 'firebase/database'
-import { Users, Play, Copy, Check, Settings as SettingsIcon, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image } from 'lucide-react'
+import { ref, onValue, update, remove, onDisconnect, serverTimestamp, get } from 'firebase/database'
+import { Users, Play, Copy, Check, Settings as SettingsIcon, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image, Star } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey, type FailedTrack } from '@/lib/spotify'
 import { soundManager } from '@/lib/sounds'
@@ -24,6 +24,7 @@ type Player = {
     playlist_name?: string | null
     playlist_cover_url?: string | null
     playlist_song_count?: number | null
+    playlist_source_url?: string | null
 }
 
 type RoomSettings = {
@@ -57,6 +58,30 @@ const RadialProgress = ({ progress, size = 24, strokeWidth = 3, color = 'current
     )
 }
 
+function normalizePlaylistUrl(raw: string): string {
+    const value = raw.trim()
+    if (!value) return ''
+
+    try {
+        const parsed = new URL(value)
+        const host = parsed.hostname.toLowerCase()
+
+        if (host.includes('spotify.com') && parsed.pathname.includes('/playlist/')) {
+            const match = parsed.pathname.match(/\/playlist\/([a-zA-Z0-9]+)/)
+            if (match?.[1]) return `https://open.spotify.com/playlist/${match[1]}`
+        }
+
+        if (host.includes('youtube.com') || host.includes('youtu.be')) {
+            const list = parsed.searchParams.get('list')
+            if (list) return `https://www.youtube.com/playlist?list=${list}`
+        }
+
+        return parsed.toString().toLowerCase()
+    } catch {
+        return value.toLowerCase()
+    }
+}
+
 function progressToColor(progress: number): string {
     const p = Math.max(0, Math.min(100, progress))
     if (p < 50) {
@@ -74,7 +99,7 @@ function progressToColor(progress: number): string {
 }
 
 export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { roomCode: string, initialSettings: any, isHost: boolean, hostId: string }) {
-    const { profile } = useUser()
+    const { profile, updateProfile } = useUser()
     const router = useRouter()
 
     // State
@@ -110,15 +135,19 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     const [showChartMenu, setShowChartMenu] = useState(false)
     const [failedTracks, setFailedTracks] = useState<FailedTrack[]>([])
     const [showFailedModal, setShowFailedModal] = useState(false)
+    const [savingPlaylist, setSavingPlaylist] = useState(false)
     const lastProgressRef = useRef(0)
     const prevPlayerCountRef = useRef(0)
     const prevAllReadyRef = useRef(false)
     const chartMenuRef = useRef<HTMLDivElement>(null)
+    const isMounted = useRef(true)
+    const lastDbUpdateRef = useRef(0)
+    const importSessionRef = useRef(0)
 
     // Derived
     const currentPlayer = players.find(p => p.id === profile?.id)
     const totalSongs = allSongs.length
-    const mySongs = useMemo(() => allSongs.filter(s => s.user_id === profile?.id), [allSongs, profile?.id])
+    const mySongs = useMemo(() => allSongs.filter(s => (s.user_id === profile?.id) || (s.picked_by_user_id === profile?.id)), [allSongs, profile?.id])
     const hasImported = mySongs.length > 0
 
     // --------------------------------------------------------------------------------
@@ -200,51 +229,81 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         }
     }, [profile, roomCode])
 
+    useEffect(() => {
+        return () => { isMounted.current = false }
+    }, [])
+
     // --------------------------------------------------------------------------------
     // 2. ACTIONS
     // --------------------------------------------------------------------------------
     const toggleReady = async () => {
         if (!profile) return
-        const playerRef = ref(db, `rooms/${roomCode}/players/${profile.id}`)
-        await update(playerRef, {
-            is_ready: !currentPlayer?.is_ready
-        })
+        try {
+            const playerRef = ref(db, `rooms/${roomCode}/players/${profile.id}`)
+            await update(playerRef, {
+                is_ready: !currentPlayer?.is_ready
+            })
+        } catch (error) {
+            console.error('Failed to toggle ready state:', error)
+        }
     }
 
     const updateSettings = async (newSettings: Partial<RoomSettings>) => {
         if (!isHost) return
-        const roomRef = ref(db, `rooms/${roomCode}`)
-        await update(roomRef, {
-            settings: { ...settings, ...newSettings }
-        })
+        try {
+            const roomRef = ref(db, `rooms/${roomCode}`)
+            await update(roomRef, {
+                settings: { ...settings, ...newSettings }
+            })
+        } catch (error) {
+            console.error('Failed to update settings:', error)
+        }
     }
 
     const handleImport = async () => {
-        if (!importUrl || !profile) return
+        await executeImport(importUrl)
+    }
 
-        // Restriction
-        if (hasImported) {
-            alert('You have already imported a playlist!')
-            return
-        }
+    const executeImport = async (targetUrl: string) => {
+        if (!targetUrl || !profile) return
+        if (importing) return
 
+        const sessionId = ++importSessionRef.current
         try {
+            // Restriction (source of truth from DB, not only local state)
+            const latestSongsSnap = await get(ref(db, `rooms/${roomCode}/songs`))
+            const latestSongs = latestSongsSnap.exists() ? Object.values(latestSongsSnap.val() as Record<string, any>) : []
+            const hasSongsInDb = latestSongs.some((song: any) =>
+                song && (song.user_id === profile.id || song.picked_by_user_id === profile.id)
+            )
+            if (hasSongsInDb) {
+                alert('You have already imported a playlist!')
+                return
+            }
+
+            if (sessionId !== importSessionRef.current) return
             setImporting(true)
             setImportProgress(0)
             lastProgressRef.current = 0
 
             // Mark as importing in DB
-            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true, import_progress: 0 })
+            update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true, import_progress: 0 }).catch(() => { })
 
-            const result = await fetchSpotifyData(importUrl, (value) => {
+            const result = await fetchSpotifyData(targetUrl, (value) => {
+                if (sessionId !== importSessionRef.current) return
                 const clamped = Math.min(100, Math.max(0, Math.round(value)))
-                setImportProgress(clamped)
-                const shouldUpdate = clamped === 100 || clamped - lastProgressRef.current >= 3
-                if (shouldUpdate) {
+                if (isMounted.current) setImportProgress(clamped)
+                
+                const now = Date.now()
+                const shouldDbUpdate = clamped === 100 || (clamped - lastProgressRef.current >= 3 && now - lastDbUpdateRef.current > 500)
+                if (shouldDbUpdate) {
                     lastProgressRef.current = clamped
-                    void update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { import_progress: clamped })
+                    lastDbUpdateRef.current = now
+                    update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { import_progress: clamped }).catch(() => {})
                 }
             })
+
+            if (sessionId !== importSessionRef.current) return
             await addSongsToRoom(roomCode, profile.id, result.tracks)
             if (result.failed.length > 0) setFailedTracks(result.failed)
             setImportUrl('')
@@ -257,17 +316,21 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                 import_progress: 100,
                 playlist_name: result.collectionName || 'Imported Playlist',
                 playlist_cover_url: result.collectionCoverUrl || null,
-                playlist_song_count: result.tracks.length
+                playlist_song_count: result.tracks.length,
+                playlist_source_url: targetUrl
             })
 
         } catch (error: any) {
             console.error(error)
-            alert(error.message || 'Failed to import playlist')
-            // Reset importing flag on error
-            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: false, import_progress: 0 })
+            if (isMounted.current) {
+                alert(error.message || 'Failed to import playlist')
+            }
+            update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: false, import_progress: 0 }).catch(() => {})
         } finally {
-            setImporting(false)
-            setImportProgress(0)
+            if (isMounted.current && sessionId === importSessionRef.current) {
+                setImporting(false)
+                setImportProgress(0)
+            }
         }
     }
 
@@ -287,25 +350,33 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     }, [])
 
     const handleChartImport = async (chartKey: ChartKey) => {
+        if (importing) return
         if (!profile || hasImported) {
             if (hasImported) alert('You have already imported a playlist!')
             return
         }
+        const sessionId = ++importSessionRef.current
         setShowChartMenu(false)
         try {
+            if (sessionId !== importSessionRef.current) return
             setImporting(true)
             setImportProgress(0)
             lastProgressRef.current = 0
-            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true, import_progress: 0 })
+            update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: true, import_progress: 0 }).catch(() => { })
             const result = await fetchChartTracks(chartKey, (value) => {
+                if (sessionId !== importSessionRef.current) return
                 const clamped = Math.min(100, Math.max(0, Math.round(value)))
-                setImportProgress(clamped)
-                const shouldUpdate = clamped === 100 || clamped - lastProgressRef.current >= 3
-                if (shouldUpdate) {
+                if (isMounted.current) setImportProgress(clamped)
+                
+                const now = Date.now()
+                const shouldDbUpdate = clamped === 100 || (clamped - lastProgressRef.current >= 3 && now - lastDbUpdateRef.current > 500)
+                if (shouldDbUpdate) {
                     lastProgressRef.current = clamped
-                    void update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { import_progress: clamped })
+                    lastDbUpdateRef.current = now
+                    update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { import_progress: clamped }).catch(() => {})
                 }
             })
+            if (sessionId !== importSessionRef.current) return
             await addSongsToRoom(roomCode, profile.id, result.tracks)
             if (result.failed.length > 0) setFailedTracks(result.failed)
             await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), {
@@ -314,15 +385,53 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                 import_progress: 100,
                 playlist_name: result.collectionName || 'Imported Playlist',
                 playlist_cover_url: result.collectionCoverUrl || null,
-                playlist_song_count: result.tracks.length
+                playlist_song_count: result.tracks.length,
+                playlist_source_url: null
             })
         } catch (error: any) {
             console.error(error)
-            alert(error.message || 'Failed to import chart')
-            await update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: false, import_progress: 0 })
+            if (isMounted.current) {
+                alert(error.message || 'Failed to import chart')
+            }
+            update(ref(db, `rooms/${roomCode}/players/${profile.id}`), { is_importing: false, import_progress: 0 }).catch(() => {})
         } finally {
-            setImporting(false)
-            setImportProgress(0)
+            if (isMounted.current && sessionId === importSessionRef.current) {
+                setImporting(false)
+                setImportProgress(0)
+            }
+        }
+    }
+
+    const handleSaveImportedPlaylist = async () => {
+        if (!profile || !currentPlayer?.playlist_source_url) return
+        if (savingPlaylist) return
+
+        try {
+            setSavingPlaylist(true)
+            const existing = profile.saved_playlists || []
+            const normalized = normalizePlaylistUrl(currentPlayer.playlist_source_url)
+            const alreadyExists = existing.some(pl => normalizePlaylistUrl(pl.url) === normalized)
+
+            if (alreadyExists) {
+                if (isMounted.current) alert('This playlist is already in your saved playlists.')
+                return
+            }
+
+            const nextPlaylists = [
+                ...existing,
+                {
+                    name: currentPlayer.playlist_name || 'Imported Playlist',
+                    url: currentPlayer.playlist_source_url
+                }
+            ]
+
+            await update(ref(db, `profiles/${profile.id}`), { saved_playlists: nextPlaylists })
+            await updateProfile({ saved_playlists: nextPlaylists })
+        } catch (error: any) {
+            console.error('Failed to save imported playlist:', error)
+            if (isMounted.current) alert(error?.message || 'Failed to save playlist')
+        } finally {
+            if (isMounted.current) setSavingPlaylist(false)
         }
     }
 
@@ -402,7 +511,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
 
     const sortedPlayers = [...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0))
     const readyPlayers = players.filter(p => p.is_ready).length
-    const importingPlayers = players.filter(p => p.is_importing).length
+    const importingPlayers = players.filter(p => p.is_importing && (p.import_progress ?? 0) < 100).length
     const waitingPlayers = players.length - readyPlayers
     const isDenseRoster = players.length >= 10
     const statusTone = creationProgress > 0
@@ -415,7 +524,57 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
     const modeMeta = modes.find(mode => mode.id === settings.mode)
     const viewportHeight = 'calc(100dvh - 96px)'
     const readyPlayersCount = players.filter(p => p.is_ready).length
-    const canHostStart = totalSongs > 0 && readyPlayersCount > 0 && !players.some(p => p.is_importing) && !isStarting
+    const canHostStart = totalSongs > 0 && readyPlayersCount > 0 && !players.some(p => p.is_importing && (p.import_progress ?? 0) < 100) && !isStarting
+
+    // Button Content Helpers to prevent nested ternary hell
+    const getHostButtonContent = () => {
+        if (isStarting) return <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> {loadingMsg}</>
+        if (players.some(p => p.is_importing && (p.import_progress ?? 0) < 100)) return <><RadialProgress progress={importProgress} size={20} strokeWidth={3} /> Importing playlist...</>
+        if (totalSongs === 0) return 'Import a playlist to start'
+        if (readyPlayersCount === 0) return 'Need one ready player'
+        return <><Play fill="currentColor" /> START GAME</>
+    }
+
+    const getPlayerButtonContent = () => {
+        if (creationProgress > 0) return <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> STARTING...</>
+        if (currentPlayer?.is_ready) return players.some(p => p.is_importing && (p.import_progress ?? 0) < 100) ? 'Waiting for other players...' : 'Waiting for host...'
+        return hasImported ? 'CLICK TO READY UP' : 'SKIP IMPORT / READY'
+    }
+
+    // Failsafe:
+    // 1) If my songs are already present but importing flag stayed true, auto-finish it.
+    // 2) If importing is stuck at 100% with zero songs, auto-reset so the user can retry.
+    useEffect(() => {
+        if (!profile) return
+
+        const me = players.find(p => p.id === profile.id)
+        if (!me?.is_importing) return
+
+        if (mySongs.length > 0) {
+            update(ref(db, `rooms/${roomCode}/players/${profile.id}`), {
+                is_importing: false,
+                import_progress: 100,
+                is_ready: true
+            }).catch(() => { })
+            return
+        }
+
+        if ((me.import_progress ?? 0) >= 100) {
+            const t = setTimeout(() => {
+                const latest = players.find(p => p.id === profile.id)
+                if (!latest?.is_importing) return
+                if ((latest.import_progress ?? 0) < 100) return
+                if (mySongs.length > 0) return
+
+                update(ref(db, `rooms/${roomCode}/players/${profile.id}`), {
+                    is_importing: false,
+                    import_progress: 0
+                }).catch(() => { })
+            }, 8000)
+
+            return () => clearTimeout(t)
+        }
+    }, [profile, mySongs.length, players, roomCode])
 
     return (
         <div style={{
@@ -715,21 +874,45 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                         }}>
                             <CheckCircle size={24} style={{ flexShrink: 0 }} />
                             <div style={{ fontWeight: 600, flex: 1 }}>Playlist Imported ({mySongs.length} songs)</div>
-                            {failedTracks.length > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {failedTracks.length > 0 && (
+                                    <button
+                                        onClick={() => setShowFailedModal(true)}
+                                        title={`${failedTracks.length} songs couldn't be imported`}
+                                        style={{
+                                            background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                                            borderRadius: '8px', padding: '6px 10px',
+                                            display: 'flex', alignItems: 'center', gap: '6px',
+                                            cursor: 'pointer', color: '#ef4444', fontSize: '0.8rem', fontWeight: 600, flexShrink: 0,
+                                        }}
+                                    >
+                                        <AlertTriangle size={16} />
+                                        {failedTracks.length}
+                                    </button>
+                                )}
                                 <button
-                                    onClick={() => setShowFailedModal(true)}
-                                    title={`${failedTracks.length} songs couldn't be imported`}
+                                    onClick={handleSaveImportedPlaylist}
+                                    disabled={savingPlaylist || !currentPlayer?.playlist_source_url}
+                                    title={currentPlayer?.playlist_source_url ? (savingPlaylist ? 'Saving playlist...' : 'Save playlist to profile') : 'Only URL imports can be saved'}
                                     style={{
-                                        background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
-                                        borderRadius: '8px', padding: '6px 10px',
-                                        display: 'flex', alignItems: 'center', gap: '6px',
-                                        cursor: 'pointer', color: '#ef4444', fontSize: '0.8rem', fontWeight: 600, flexShrink: 0,
+                                        background: 'rgba(255,255,255,0.08)',
+                                        border: '1px solid rgba(255,255,255,0.2)',
+                                        borderRadius: '8px',
+                                        padding: '6px 10px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        cursor: savingPlaylist || !currentPlayer?.playlist_source_url ? 'not-allowed' : 'pointer',
+                                        color: 'var(--text-main)',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600,
+                                        lineHeight: 1,
+                                        opacity: savingPlaylist || !currentPlayer?.playlist_source_url ? 0.6 : 1
                                     }}
                                 >
-                                    <AlertTriangle size={16} />
-                                    {failedTracks.length}
+                                    <Star size={16} />
                                 </button>
-                            )}
+                            </div>
                         </div>
                         ) : (
                             <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
@@ -785,6 +968,24 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                             }}>PT</span>
                                             Top 100 Portugal
                                         </button>
+                                        
+                                        {/* User Saved Playlists */}
+                                        {profile?.saved_playlists && profile.saved_playlists.length > 0 && (
+                                            <>
+                                                <div style={{ padding: '8px 12px', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: '4px' }}>
+                                                    My Playlists
+                                                </div>
+                                                {profile.saved_playlists.map((pl, idx: number) => (
+                                                    <button key={idx} className="chart-dropdown__item" onClick={() => {
+                                                        setShowChartMenu(false);
+                                                        setImportUrl(pl.url);
+                                                        executeImport(pl.url);
+                                                    }}>
+                                                        🎵 {pl.name}
+                                                    </button>
+                                                ))}
+                                            </>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -915,17 +1116,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                             : 'Start game'
                             }
                         >
-                            {isStarting ? (
-                                <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> {loadingMsg}</>
-                            ) : players.some(p => p.is_importing) ? (
-                                <><RadialProgress progress={importProgress} size={20} strokeWidth={3} /> Importing playlist...</>
-                            ) : totalSongs === 0 ? (
-                                'Import a playlist to start'
-                            ) : readyPlayersCount === 0 ? (
-                                'Need one ready player'
-                            ) : (
-                                <><Play fill="currentColor" /> START GAME</>
-                            )}
+                            {getHostButtonContent()}
                         </button>
                     ) : (
                         <button
@@ -941,13 +1132,7 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                 minHeight: '60px', height: '60px'
                             }}
                         >
-                            {creationProgress > 0 ? (
-                                <><RadialProgress progress={creationProgress} size={20} strokeWidth={3} /> STARTING...</>
-                            ) : (
-                                currentPlayer?.is_ready
-                                    ? (players.some(p => p.is_importing) ? 'Waiting for other players...' : 'Waiting for host...')
-                                    : hasImported ? 'CLICK TO READY UP' : 'SKIP IMPORT / READY'
-                            )}
+                            {getPlayerButtonContent()}
                         </button>
                     )}
                     </div>
