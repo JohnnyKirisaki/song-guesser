@@ -34,6 +34,7 @@ export type GameState = {
         title: string
         cover_url: string
         album_name?: string | null
+        release_year?: number | null
     }
 }
 
@@ -48,6 +49,12 @@ export type SongItem = {
     cover_url: string
     preview_url: string | null
     picked_by_user_id: string
+    /**
+     * Release year (e.g. 2004). Optional because older songs imported before
+     * the field was added won't have it, and some upstream APIs only give a
+     * partial release_date. Year-guesser mode skips songs where this is null.
+     */
+    release_year?: number | null
 }
 
 export type MaskedSongItem = Omit<SongItem, 'artist_name' | 'track_name' | 'cover_url'> & {

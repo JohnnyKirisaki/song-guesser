@@ -1,4 +1,28 @@
-export type ScoringMode = 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'album_art'
+export type ScoringMode = 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'album_art' | 'guess_who' | 'who_sang_that' | 'chill_rating' | 'year_guesser'
+
+/**
+ * Year-guesser scoring table. Graduated by absolute distance in years:
+ *   0 (exact):     3 points
+ *   ±1 year:       2 points
+ *   ±2 years:      1 point
+ *   anything else: 0 points
+ * Exposed so the reveal route can share the same rubric the client shows.
+ */
+export function scoreYearGuess(guessYear: number | null | undefined, answerYear: number | null | undefined): { points: number; diff: number | null } {
+    if (
+        guessYear == null ||
+        answerYear == null ||
+        !Number.isFinite(guessYear) ||
+        !Number.isFinite(answerYear)
+    ) {
+        return { points: 0, diff: null }
+    }
+    const diff = Math.abs(Math.round(guessYear) - Math.round(answerYear))
+    if (diff === 0) return { points: 3, diff }
+    if (diff === 1) return { points: 2, diff }
+    if (diff === 2) return { points: 1, diff }
+    return { points: 0, diff }
+}
 
 // --- Normalization ---
 
@@ -416,6 +440,24 @@ export function calculateScore(
         const timeMult = 1 + (timeLeft / totalTime)
         if (correctTitle) points += 4 * timeMult  // album correct
         if (correctArtist) points += 1 * timeMult // artist correct
+    } else if (mode === 'chill_rating') {
+        // Chill Rating: no scoring. Reveal route handles ratings separately.
+        points = 0
+    } else if (mode === 'guess_who' || mode === 'who_sang_that') {
+        // Social modes: 1 point if correct. Reveal route calls this with a boolean in correctTitle.
+        if (correctTitle) points += 1
+    } else if (mode === 'year_guesser') {
+        // Year Guesser: guess.title carries the numeric year (UI uses a number
+        // input but we serialize everything through the `title` field for
+        // compatibility with existing Firebase schema). Reveal route does the
+        // authoritative scoring via scoreYearGuess(); this branch is defensive.
+        const guessYear = parseInt(guess?.title || '', 10)
+        const answerYear = parseInt(answer?.title || '', 10)
+        const { points: p, diff } = scoreYearGuess(guessYear, answerYear)
+        points = p
+        // Surface "exact hit" in correctTitle so the reveal UI can render a
+        // green glow consistently with other modes.
+        return { points, correctTitle: diff === 0, correctArtist: false }
     } else {
         // Normal
         if (correctTitle) points += TITLE_POINTS * timeMultiplier

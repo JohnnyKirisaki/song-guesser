@@ -4,35 +4,13 @@ import { useState, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, remove, onDisconnect, serverTimestamp, get } from 'firebase/database'
-import { Users, Play, Copy, Check, Settings as SettingsIcon, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image, Star } from 'lucide-react'
+import { Users, Play, Copy, Check, Settings as SettingsIcon, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image, Star, Calendar, Eye } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey, type FailedTrack } from '@/lib/spotify'
 import { soundManager } from '@/lib/sounds'
 import UserPopover from '@/components/UserPopover'
 import LobbyChat from '@/components/LobbyChat'
-
-type Player = {
-    id: string
-    username: string
-    avatar_url: string
-    score: number
-    is_ready: boolean
-    is_host: boolean
-    is_importing?: boolean
-    import_progress?: number
-    joined_at?: number
-    playlist_name?: string | null
-    playlist_cover_url?: string | null
-    playlist_song_count?: number | null
-    playlist_source_url?: string | null
-}
-
-type RoomSettings = {
-    rounds: number
-    time: number
-    mode: 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'guess_who' | 'who_sang_that' | 'album_art' | 'chill_rating'
-    no_duplicates?: boolean
-}
+import type { Player, RoomSettings } from '@/lib/types'
 
 const RadialProgress = ({ progress, size = 24, strokeWidth = 3, color = 'currentColor' }: { progress: number, size?: number, strokeWidth?: number, color?: string }) => {
     const radius = (size - strokeWidth) / 2
@@ -197,9 +175,11 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         prevPlayerCountRef.current = players.length
     }, [players.length])
 
-    // Play fanfare only when readiness transitions to all-ready
+    // Play fanfare only when readiness transitions to all-ready.
+    // Spectators are excluded from readiness calc — they never need to ready up.
     useEffect(() => {
-        const allReady = players.length >= 2 && players.every(p => p.is_ready)
+        const playingPlayers = players.filter(p => !p.is_spectator)
+        const allReady = playingPlayers.length >= 2 && playingPlayers.every(p => p.is_ready)
         if (allReady && !prevAllReadyRef.current) {
             soundManager.play('all_ready')
         }
@@ -507,7 +487,8 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         { id: 'guess_who', icon: HelpCircle, label: 'Who Got The Aux?', description: 'Figure out which player added the revealed song.' },
         { id: 'who_sang_that', icon: Mic, label: 'Who Sang That?', description: 'Identify the vocalist from the performance.' },
         { id: 'album_art', icon: Image, label: 'Album Art', description: 'Solve the round from the album cover reveal.' },
-        { id: 'chill_rating', icon: Star, label: 'Chill Rating', description: 'Sit back and rate songs from 1 to 10. No winners, losers, or leaderboards.' }
+        { id: 'chill_rating', icon: Star, label: 'Chill Rating', description: 'Sit back and rate songs from 1 to 10. No winners, losers, or leaderboards.' },
+        { id: 'year_guesser', icon: Calendar, label: 'Year Guesser', description: 'Guess the release year. 3 pts exact, 2 pts ±1 year, 1 pt ±2 years.' }
     ]
 
     const sortedPlayers = [...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0))
@@ -681,20 +662,25 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                 const progress = Math.min(100, Math.max(0, Math.round(p.import_progress ?? 0)))
                                 const playlistTitle = `${p.playlist_name || 'Imported Collection'}${typeof p.playlist_song_count === 'number' ? ` (${p.playlist_song_count})` : ''}`
                                 const shouldScrollPlaylist = playlistTitle.length > (isDenseRoster ? 18 : 24)
-                                const statusDotColor = p.is_importing
+                                const statusDotColor = p.is_spectator
                                     ? {
-                                        background: '#7dd3fc',
-                                        boxShadow: '0 0 0 4px rgba(125,211,252,0.12)'
+                                        background: '#60a5fa',
+                                        boxShadow: '0 0 0 4px rgba(96,165,250,0.12)'
                                     }
-                                    : p.is_ready
+                                    : p.is_importing
                                         ? {
-                                            background: 'var(--primary)',
-                                            boxShadow: '0 0 0 4px rgba(46,242,160,0.12)'
+                                            background: '#7dd3fc',
+                                            boxShadow: '0 0 0 4px rgba(125,211,252,0.12)'
                                         }
-                                        : {
-                                            background: '#fde047',
-                                            boxShadow: '0 0 0 4px rgba(250,204,21,0.10)'
-                                        }
+                                        : p.is_ready
+                                            ? {
+                                                background: 'var(--primary)',
+                                                boxShadow: '0 0 0 4px rgba(46,242,160,0.12)'
+                                            }
+                                            : {
+                                                background: '#fde047',
+                                                boxShadow: '0 0 0 4px rgba(250,204,21,0.10)'
+                                            }
 
                                 return (
                                     <div
@@ -746,6 +732,16 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                                         }} />
                                                         <div style={{ fontWeight: 800, fontSize: isDenseRoster ? '0.92rem' : '1rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</div>
                                                         {p.id === hostId && <Crown size={16} color="#fbbf24" />}
+                                                        {p.is_spectator && (
+                                                            <span
+                                                                title="Spectator"
+                                                                aria-label="Spectator"
+                                                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 7px', borderRadius: '999px', background: 'rgba(96,165,250,0.15)', border: '1px solid rgba(96,165,250,0.35)', color: '#60a5fa', fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}
+                                                            >
+                                                                <Eye size={12} />
+                                                                Watching
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>

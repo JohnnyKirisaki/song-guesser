@@ -42,6 +42,10 @@ export async function POST(request: Request) {
 
         const allSongs = Object.values(roomData.songs || {}) as SongItem[]
         const secretSong = secretSnap.val() as SongItem
+        if (!secretSong || typeof secretSong !== 'object' || !secretSong.id) {
+            console.error(`[replace-song] Malformed secret for room ${roomCode} round ${parsedRoundIndex}`)
+            return NextResponse.json({ error: 'Malformed song secret' }, { status: 500 })
+        }
         const isLyricsOnly = roomData.settings?.mode === 'lyrics_only'
         const isSuddenDeath = !!roomData.game_state?.is_sudden_death
 

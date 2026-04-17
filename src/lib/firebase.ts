@@ -4,13 +4,13 @@ import { getDatabase } from "firebase/database";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-    apiKey: "AIzaSyDq0X64s2w532lTZ8XcTdLU8JRzOAabEHw",
-    authDomain: "beatbattle-e02aa.firebaseapp.com",
-    databaseURL: "https://beatbattle-e02aa-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "beatbattle-e02aa",
-    storageBucket: "beatbattle-e02aa.firebasestorage.app",
-    messagingSenderId: "1041147594033",
-    appId: "1:1041147594033:web:5b3ce470b89f221b695c10"
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "AIzaSyDq0X64s2w532lTZ8XcTdLU8JRzOAabEHw",
+    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "beatbattle-e02aa.firebaseapp.com",
+    databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL ?? "https://beatbattle-e02aa-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "beatbattle-e02aa",
+    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? "beatbattle-e02aa.firebasestorage.app",
+    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "1041147594033",
+    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? "1:1041147594033:web:5b3ce470b89f221b695c10"
 };
 
 // Initialize Firebase (Singleton pattern)

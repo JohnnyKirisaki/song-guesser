@@ -2,25 +2,16 @@ import { db } from '@/lib/firebase'
 import { ref, update, serverTimestamp } from 'firebase/database'
 import { GameState } from './game-logic'
 import { initiateSuddenDeath } from './sudden-death'
+import type { Player } from './types'
 
-export interface Player {
-    id: string
-    username: string
-    score: number
-    has_submitted: boolean
-    submitted_at?: number | any
-    last_guess?: any
-    last_round_points?: number
-    last_round_correct_title?: boolean
-    last_round_correct_artist?: boolean
-    avatar_url?: string
-    sudden_death_score?: number
-}
+export type { Player }
 
-// Helper to find tie groups
+// Helper to find tie groups. Spectators are excluded — they never score, so
+// they'd otherwise show up as a perpetual 0-score "tie group" and drag the
+// game into sudden death every time.
 function getFirstTieGroup(list: Player[], resolvedGroups: Set<string> = new Set()): string[] {
     const groups: Record<number, Player[]> = {}
-    list.forEach(p => {
+    list.filter(p => !p.is_spectator).forEach(p => {
         const score = p.score || 0
         if (!groups[score]) groups[score] = []
         groups[score].push(p)

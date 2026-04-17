@@ -82,22 +82,46 @@ export async function POST(request: Request) {
 
         updates[`room_secrets/${roomCode}`] = secrets
 
-        // 3. Lyrics Handling (Server Side Prefetch) - ALL ROUNDS PARALLEL
+        // 3. Lyrics Handling (Server Side Prefetch) - parallel with per-song
+        // timeout so one slow upstream never hangs game start. Also caps total
+        // wall-clock regardless of how many songs time out.
         if (settings.mode === 'lyrics_only') {
             const lyricsUpdates: Record<string, string> = {}
-            
-            await asyncPool(3, playlist, async (song: SongItem) => {
+            const PER_SONG_TIMEOUT_MS = 4000
+            const OVERALL_TIMEOUT_MS = 15_000
+
+            const fetchOne = async (song: SongItem) => {
+                const controller = new AbortController()
+                const timer = setTimeout(() => controller.abort(), PER_SONG_TIMEOUT_MS)
                 try {
                     const apiUrl = new URL(request.url).origin + `/api/lyrics?artist=${encodeURIComponent(song.artist_name)}&title=${encodeURIComponent(song.track_name)}`
-                    const res = await fetch(apiUrl)
+                    const res = await fetch(apiUrl, { signal: controller.signal })
                     const data = await res.json()
                     if (data.lyrics) {
                         lyricsUpdates[`rooms/${roomCode}/lyrics_cache/${song.id}`] = data.lyrics
                     }
                 } catch {
-                    // Ignore prefetch failures
+                    // Ignore prefetch failures (including timeouts)
+                } finally {
+                    clearTimeout(timer)
                 }
-            })
+            }
+
+            // Pool + Promise.race with overall cap — whichever finishes first wins.
+            await Promise.race([
+                (async () => {
+                    const results = await Promise.allSettled(
+                        // asyncPool caps concurrency at 3; allSettled so one
+                        // rejection doesn't poison the batch.
+                        [asyncPool(3, playlist, fetchOne)]
+                    )
+                    void results
+                })(),
+                new Promise<void>(resolve => setTimeout(() => {
+                    console.warn('[Lyrics Prefetch] Overall timeout hit; proceeding with partial cache')
+                    resolve()
+                }, OVERALL_TIMEOUT_MS))
+            ])
 
             Object.entries(lyricsUpdates).forEach(([path, val]) => {
                 updates[path] = val

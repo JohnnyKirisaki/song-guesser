@@ -6,6 +6,7 @@ import { db } from '@/lib/firebase'
 import { ref, onValue, update, get, serverTimestamp, onDisconnect, remove } from 'firebase/database'
 import { useUser } from '@/context/UserContext'
 import { GameState, SongItem } from '@/lib/game-logic'
+import type { Player } from '@/lib/types'
 import { useVolume } from '@/context/VolumeContext'
 
 import { Music, Check, Mic2, Disc, FileText, Zap, SkipForward, HelpCircle, Mic, LogOut, Star, Image as ImageIcon } from 'lucide-react'
@@ -20,26 +21,22 @@ import { initiateSuddenDeath, fetchMoreSuddenDeathSongs, endSuddenDeath } from '
 import UserPopover from '@/components/UserPopover'
 import GuessWhoButton from '@/components/GuessWhoButton'
 import { useIOSAudioUnlock } from '@/hooks/useIOSAudioUnlock'
+import { usePreviewResolver } from '@/hooks/usePreviewResolver'
 import AnimatedNumber from '@/components/AnimatedNumber'
-
-type Player = {
-    id: string
-    username: string
-    avatar_url: string
-    score: number
-    has_submitted: boolean
-    submitted_at?: number | string | null
-    last_guess?: { artist: string, title: string }
-    last_round_points?: number
-    last_round_correct_title?: boolean
-    last_round_correct_artist?: boolean
-    last_round_time_taken?: number
-    last_round_index?: number
-    is_host: boolean
-    sudden_death_score?: number
-}
+import GameErrorBoundary from '@/components/GameErrorBoundary'
 
 export default function GamePage() {
+    // Wrap the entire game subtree in an error boundary so a render crash
+    // (bad playlist shape, audio element blow-up, etc.) doesn't blank the
+    // page mid-match. The fallback gives users a "Return to lobby" escape.
+    return (
+        <GameErrorBoundary boundaryName="GamePage">
+            <GamePageInner />
+        </GameErrorBoundary>
+    )
+}
+
+function GamePageInner() {
     const params = useParams()
     const code = params.code as string
     const { profile } = useUser()
@@ -102,36 +99,68 @@ export default function GamePage() {
         { crossOrigin: 'anonymous', quality: 10 }
     )
 
-    const titleGradient = (() => {
-        if (!dominantColor) return 'linear-gradient(135deg, #ffffff 0%, rgba(29, 185, 84, 0.8) 100%)'
-        const match = dominantColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
-        if (!match) return 'linear-gradient(135deg, #ffffff 0%, rgba(29, 185, 84, 0.8) 100%)'
-        const r = parseInt(match[1]), g = parseInt(match[2]), b = parseInt(match[3])
-        // Perceived brightness (0–1)
-        const brightness = (r * 299 + g * 587 + b * 114) / 1000 / 255
+    // Clamp the extracted dominant color into a safe luminance window so we
+    // don't end up with near-white flares (unreadable overlay text) or pitch
+    // black (invisible against the page bg). Uses relative luminance (sRGB
+    // weighted) clamped to [0.12, 0.68].
+    const safeDominant = useMemo(() => {
+        if (!dominantColor) return null
+        const m = dominantColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+        if (!m) return null
+        let r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3])
+
+        const MIN_LUM = 0.12
+        const MAX_LUM = 0.68
+        const luminance = (rr: number, gg: number, bb: number) =>
+            (rr * 299 + gg * 587 + bb * 114) / 1000 / 255
+
+        let lum = luminance(r, g, b)
+        // Scale toward black/white until we're inside the safe window. 6 steps
+        // is enough for any input — the factor shrinks the distance each pass.
+        for (let i = 0; i < 6 && (lum < MIN_LUM || lum > MAX_LUM); i++) {
+            if (lum > MAX_LUM) {
+                r = Math.round(r * 0.85)
+                g = Math.round(g * 0.85)
+                b = Math.round(b * 0.85)
+            } else {
+                r = Math.round(r + (255 - r) * 0.25)
+                g = Math.round(g + (255 - g) * 0.25)
+                b = Math.round(b + (255 - b) * 0.25)
+            }
+            lum = luminance(r, g, b)
+        }
+        return { r, g, b, lum }
+    }, [dominantColor])
+
+    // Memoize the derived gradient string so it only recomputes when dominantColor
+    // actually changes. Previously it ran on every render (including every audio
+    // status / timer tick), allocating a new string and invalidating effects below.
+    const titleGradient = useMemo(() => {
+        if (!safeDominant) return 'linear-gradient(135deg, #ffffff 0%, rgba(29, 185, 84, 0.8) 100%)'
+        const { r, g, b, lum } = safeDominant
         let r2, g2, b2
-        if (brightness > 0.5) {
-            // Bright primary — subtle darkening
+        if (lum > 0.5) {
             r2 = Math.round(r * 0.65); g2 = Math.round(g * 0.65); b2 = Math.round(b * 0.65)
         } else {
-            // Dark primary — subtle lightening
             r2 = Math.round(r + (255 - r) * 0.28); g2 = Math.round(g + (255 - g) * 0.28); b2 = Math.round(b + (255 - b) * 0.28)
         }
         return `linear-gradient(135deg, rgb(${r},${g},${b}) 0%, rgb(${r2},${g2},${b2}) 100%)`
-    })()
+    }, [safeDominant])
 
-    // Only apply the dynamic color during the REVEAL phase. Otherwise, fallback to Spotify Green/Theme default.
-    const dynamicFlare1Temp = isRealRevealTemp || (gameState?.phase === 'reveal')
-        ? (dominantColor ? dominantColor.replace('rgb', 'rgba').replace(')', ', 0.6)') : 'rgba(29, 185, 84, 0.6)')
-        : 'rgba(46, 242, 160, 0.5)'
+    // Only apply the dynamic color during the REVEAL phase. Otherwise fall back to theme defaults.
+    const isRevealPhase = isRealRevealTemp || gameState?.phase === 'reveal'
+    const safeDominantRgb = safeDominant ? `rgb(${safeDominant.r}, ${safeDominant.g}, ${safeDominant.b})` : null
+    const dynamicFlare1Temp = useMemo(() => isRevealPhase
+        ? (safeDominantRgb ? safeDominantRgb.replace('rgb', 'rgba').replace(')', ', 0.6)') : 'rgba(29, 185, 84, 0.6)')
+        : 'rgba(46, 242, 160, 0.5)', [isRevealPhase, safeDominantRgb])
 
-    const dynamicFlare2Temp = isRealRevealTemp || (gameState?.phase === 'reveal')
-        ? (dominantColor ? dominantColor.replace('rgb', 'rgba').replace(')', ', 0.4)') : 'rgba(30, 215, 96, 0.4)')
-        : 'rgba(29, 185, 84, 0.4)'
+    const dynamicFlare2Temp = useMemo(() => isRevealPhase
+        ? (safeDominantRgb ? safeDominantRgb.replace('rgb', 'rgba').replace(')', ', 0.4)') : 'rgba(30, 215, 96, 0.4)')
+        : 'rgba(29, 185, 84, 0.4)', [isRevealPhase, safeDominantRgb])
 
-    const dynamicFlare3Temp = isRealRevealTemp || (gameState?.phase === 'reveal')
-        ? (dominantColor ? dominantColor.replace('rgb', 'rgba').replace(')', ', 0.3)') : 'rgba(29, 185, 84, 0.3)')
-        : 'rgba(16, 133, 59, 0.3)'
+    const dynamicFlare3Temp = useMemo(() => isRevealPhase
+        ? (safeDominantRgb ? safeDominantRgb.replace('rgb', 'rgba').replace(')', ', 0.3)') : 'rgba(29, 185, 84, 0.3)')
+        : 'rgba(16, 133, 59, 0.3)', [isRevealPhase, safeDominantRgb])
 
     useEffect(() => {
         document.documentElement.style.setProperty('--flare-1', dynamicFlare1Temp)
@@ -206,11 +235,18 @@ export default function GamePage() {
     const lyricsCacheRef = useRef<Record<string, string | null>>({})
     const processingRoundRef = useRef<number | null>(null) // Prevention for double-execution
     const lastAudioSrcRef = useRef<string | null>(null)
-    const audioPreviewOverrideRef = useRef<Record<string, string>>({})
     const audioErrorRef = useRef<Record<string, number>>({})
-    const audioPrefetchRef = useRef<Record<string, number>>({})
-    const audioPrefetchInFlightRef = useRef<Record<string, boolean>>({})
-    const audioPrefetchPromisesRef = useRef<Record<string, Promise<string | null> | null>>({})
+
+    // Preview URL resolution + prefetch dedup lives in a dedicated hook; we still
+    // expose `audioPreviewOverrideRef` from it for the error handler + audio `src`
+    // reconciliation below.
+    const {
+        resolvePreviewForSong,
+        getPreviewStatus,
+        prefetchSongPreview,
+        isResolutionInFlight,
+        audioPreviewOverrideRef,
+    } = usePreviewResolver()
     const prevScoresRef = useRef<Record<string, number>>({})
     const prevRanksRef = useRef<Record<string, number>>({})
     const currentSongRef = useRef<SongItem | undefined>(undefined)
@@ -233,112 +269,6 @@ export default function GamePage() {
             roomSongs.filter(s => s.artist_name.toLowerCase().includes(q)).map(s => s.artist_name)
         )].slice(0, 5)
     }, [guess.artist, roomSongs])
-
-    const resolvePreviewForSong = async (song: SongItem): Promise<string | null> => {
-        if (!song) return null
-        const cached = audioPreviewOverrideRef.current[song.id]
-        if (cached) return cached
-
-        const trackId = song.spotify_uri
-        const isDeezerId = typeof trackId === 'string' && /^\d+$/.test(trackId)
-        const isMasked = song.artist_name === '???' || song.track_name === '???'
-
-        const tryRefreshById = async (): Promise<string | null> => {
-            if (!isDeezerId) return null
-            try {
-                const res = await fetch(`/api/refresh-track?id=${trackId}`, { cache: 'no-store' })
-                const data = await res.json()
-                if (data.preview_url) return data.preview_url.replace(/^http:\/\//i, 'https://')
-            } catch (err) {
-                console.error('[Audio] ID refresh failed:', err)
-            }
-            return null
-        }
-
-        const tryResolveByMeta = async (): Promise<string | null> => {
-            if (isMasked || !song.artist_name || !song.track_name) return null
-            try {
-                const res = await fetch('/api/resolve-tracks', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    cache: 'no-store',
-                    body: JSON.stringify({ tracks: [{ artist: song.artist_name, title: song.track_name }] })
-                })
-                const data = await res.json()
-                const resolved = data?.tracks?.find((t: any) => t?.resolved && t?.deezer?.preview_url)
-                if (resolved?.deezer?.preview_url) return resolved.deezer.preview_url.replace(/^http:\/\//i, 'https://')
-            } catch (err) {
-                console.error('[Audio] Meta resolution failed:', err)
-            }
-            return null
-        }
-
-        // Fire both strategies simultaneously — use whichever returns a URL first
-        const [fromId, fromMeta] = await Promise.all([tryRefreshById(), tryResolveByMeta()])
-        const newUrl = fromId || fromMeta
-
-        if (newUrl && song.id) {
-            audioPreviewOverrideRef.current[song.id] = newUrl
-        }
-        return newUrl || null
-    }
-
-    const isPreviewExpired = (url: string, nowSeconds: number, leewaySeconds = 0) => {
-        const matchExp = url.match(/exp=(\d+)/)
-        const expTime = matchExp ? parseInt(matchExp[1]) : 0
-        return expTime > 0 && expTime < nowSeconds + leewaySeconds
-    }
-
-    const getPreviewStatus = (song: SongItem) => {
-        const previewUrl = typeof song.preview_url === 'string' ? song.preview_url.trim() : ''
-        const normalizedPreview = previewUrl.replace(/^http:\/\//i, 'https://')
-        const overridePreview = song.id ? audioPreviewOverrideRef.current[song.id] : null
-        const previewToUse = overridePreview || normalizedPreview
-        const hasValidPreview = previewToUse.length > 0 && previewToUse.startsWith('http')
-        const nowSeconds = Math.floor(Date.now() / 1000)
-        const isExpiredSoon = hasValidPreview && isPreviewExpired(previewToUse, nowSeconds, 60)
-        return { previewToUse, hasValidPreview, isExpiredSoon }
-    }
-
-    const prefetchSongPreview = (song: SongItem, force: boolean = false): Promise<string | null> => {
-        const { previewToUse, hasValidPreview, isExpiredSoon } = getPreviewStatus(song)
-        if (hasValidPreview && !isExpiredSoon) return Promise.resolve(previewToUse || null)
-
-        const prefetchKey = song.id || song.spotify_uri || previewToUse
-        if (!prefetchKey) return Promise.resolve(null)
-
-        const existing = audioPrefetchPromisesRef.current[prefetchKey]
-        if (existing) return existing
-
-        const lastPrefetchAt = audioPrefetchRef.current[prefetchKey] || 0
-        if (!force && Date.now() - lastPrefetchAt < 10000) return Promise.resolve(null)
-
-        if (audioPrefetchInFlightRef.current[prefetchKey]) {
-            return audioPrefetchPromisesRef.current[prefetchKey] || Promise.resolve(null)
-        }
-
-        audioPrefetchInFlightRef.current[prefetchKey] = true
-        audioPrefetchRef.current[prefetchKey] = Date.now()
-
-        const p = resolvePreviewForSong(song)
-            .then((newUrl) => {
-                if (newUrl && song.id) {
-                    audioPreviewOverrideRef.current[song.id] = newUrl
-                }
-                return newUrl || null
-            })
-            .catch((e) => {
-                console.error('[Audio] Prefetch failed:', e)
-                return null
-            })
-            .finally(() => {
-                audioPrefetchInFlightRef.current[prefetchKey] = false
-                audioPrefetchPromisesRef.current[prefetchKey] = null
-            })
-
-        audioPrefetchPromisesRef.current[prefetchKey] = p
-        return p
-    }
 
     const waitMs = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
@@ -477,8 +407,9 @@ export default function GamePage() {
     const isWhoSangThat = mode === 'who_sang_that'
     const isAlbumArt = mode === 'album_art'
     const isChillRating = mode === 'chill_rating'
-    const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat && !isChillRating
-    const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat && !isChillRating
+    const isYearGuesser = mode === 'year_guesser'
+    const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat && !isChillRating && !isYearGuesser
+    const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat && !isChillRating && !isYearGuesser
 
     const isAudioExpected = () => {
         if (!gameState || !currentSong) return false
@@ -490,7 +421,12 @@ export default function GamePage() {
     const duelingIds = gameState?.dueling_player_ids || []
     const isSuddenDeath = !!gameState?.is_sudden_death
     const isDuelingPlayer = !isSuddenDeath || duelingIds.length === 0 || duelingIds.includes(profile.id)
-    const canGuess = gameState?.phase === 'playing' && isDuelingPlayer
+    // Spectators are joined to the room and see every reveal, but never guess
+    // and never appear on the scoreboard. Their slot still exists so the
+    // spectator count is visible to others.
+    const myPlayerRow = players.find(p => p.id === profile.id)
+    const isSpectator = myPlayerRow?.is_spectator === true
+    const canGuess = gameState?.phase === 'playing' && isDuelingPlayer && !isSpectator
     const songPicker = currentSong ? players.find(p => p.id === currentSong.picked_by_user_id) : null
     const isMySong = songPicker?.id === profile.id
 
@@ -613,7 +549,10 @@ export default function GamePage() {
         hasSubmittedRef.current = hasSubmitted
     }, [hasSubmitted])
 
-    // Reconnect protection: keep player slot during game
+    // Reconnect protection: keep player slot during game, and set up the
+    // 60s-grace disconnect handler. If the tab closes cleanly we still get
+    // a `disconnected_at` stamp (not a full remove), so the reveal route
+    // knows to wait for a possible rejoin.
     useEffect(() => {
         if (!profile) return
 
@@ -621,11 +560,29 @@ export default function GamePage() {
         localStorage.setItem('bb_active_game', JSON.stringify({ code, joinedAt: Date.now() }))
 
         const playerRef = ref(db, `rooms/${code}/players/${profile.id}`)
+
+        // Any pending onDisconnect from a prior lifecycle — clear it. We'll
+        // immediately register a fresh grace-window handler below.
         onDisconnect(playerRef).cancel()
+        // Grace-window disconnect: stamp disconnected_at + last_seen so the
+        // server (reveal route) + other clients can decide whether to skip
+        // this player for the current round without yanking their score.
+        onDisconnect(playerRef).update({
+            disconnected_at: serverTimestamp() as any,
+            last_seen: serverTimestamp() as any
+        })
 
         // Re-add player if their slot was dropped by a previous onDisconnect
+        // (e.g. old .remove() handler left over from before the grace refactor).
         get(playerRef).then(async (snap) => {
-            if (snap.exists()) return
+            if (snap.exists()) {
+                // Clear any stale disconnect mark — we're back.
+                update(playerRef, {
+                    disconnected_at: null,
+                    last_seen: serverTimestamp() as any
+                })
+                return
+            }
             // Reconstruct score from round_history
             let restoredScore = 0
             try {
@@ -647,9 +604,22 @@ export default function GamePage() {
                 is_host: false,
                 is_ready: true,
                 has_submitted: false,
-                joined_at: Date.now()
+                joined_at: Date.now(),
+                disconnected_at: null,
+                last_seen: serverTimestamp() as any
             })
         })
+
+        // Heartbeat: bump last_seen every 20s so an alive-but-idle tab
+        // doesn't get mistaken for disconnected if the onDisconnect fires
+        // spuriously. 20s is well below the 60s grace window.
+        const heartbeat = setInterval(() => {
+            update(playerRef, { last_seen: serverTimestamp() as any }).catch(() => { /* best-effort */ })
+        }, 20_000)
+
+        return () => {
+            clearInterval(heartbeat)
+        }
     }, [code, profile])
 
     // --------------------------------------------------------------------------------
@@ -750,18 +720,47 @@ export default function GamePage() {
         fetchLyricsForSong(nextSong, false)
     }, [gameState?.current_round_index, isLyricsOnly, gameState?.playlist])
 
-    // Who Sang That: fetch options for current song
+    // Who Sang That: one-shot get() first, then subscribe only if the path is
+    // actually populated. Avoids attaching a listener to a path that doesn't
+    // exist yet (which is a no-op but spams the SDK's pending-listener map).
     useEffect(() => {
         const isWhoSangThatMode = roomSettings?.mode === 'who_sang_that'
         if (!isWhoSangThatMode || !currentSong?.id) {
             setWhoSangThatData(null)
             return
         }
+
+        let unsub: (() => void) | null = null
+        let cancelled = false
         const extrasRef = ref(db, `rooms/${code}/who_sang_that_extras/${currentSong.id}`)
-        const unsub = onValue(extrasRef, (snap) => {
-            setWhoSangThatData(snap.exists() ? snap.val() : null)
+
+        const attachListener = () => {
+            if (cancelled) return
+            unsub = onValue(extrasRef, (snap) => {
+                setWhoSangThatData(snap.exists() ? snap.val() : null)
+            })
+        }
+
+        get(extrasRef).then((snap) => {
+            if (cancelled) return
+            if (snap.exists()) {
+                setWhoSangThatData(snap.val())
+                // Already hydrated — subscribe for any later edits (e.g. answer reveal).
+                attachListener()
+            } else {
+                // Not yet hydrated. Subscribe now so we react the moment the
+                // host's POST /who-sang-that-extras write lands.
+                attachListener()
+            }
+        }).catch((e) => {
+            console.warn('[WhoSangThat] Initial get() failed, falling back to listener:', e)
+            if (!cancelled) attachListener()
         })
-        return () => unsub()
+
+        return () => {
+            cancelled = true
+            if (unsub) unsub()
+        }
     }, [currentSong?.id, roomSettings?.mode, code])
 
     useEffect(() => {
@@ -778,22 +777,37 @@ export default function GamePage() {
 
         whoSangThatHydrationRef.current[currentSong.id] = true
 
+        // AbortController keyed by currentSong.id: if this effect re-runs
+        // mid-fetch (e.g. round index changed), we cancel the stale request
+        // instead of racing two simultaneous hydration POSTs.
+        const controller = new AbortController()
+        const songId = currentSong.id
+
         void fetch('/api/game/who-sang-that-extras', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 roomCode: code,
                 roundIndices: [gameState.current_round_index]
-            })
+            }),
+            signal: controller.signal
         }).then(async (res) => {
             if (res.ok) return
             const data = await res.json().catch(() => ({}))
-            delete whoSangThatHydrationRef.current[currentSong.id]
+            delete whoSangThatHydrationRef.current[songId]
             console.warn(`[WhoSangThat] Extras hydrate failed (${res.status}): ${data?.error || 'unknown'}`)
         }).catch((e) => {
-            delete whoSangThatHydrationRef.current[currentSong.id]
+            if (e?.name === 'AbortError') return
+            delete whoSangThatHydrationRef.current[songId]
             console.warn('[WhoSangThat] Extras hydrate request failed', e)
         })
+
+        return () => {
+            controller.abort()
+            // Allow a fresh attempt if the effect re-runs with same songId
+            // (e.g. hasOptions flipped to false during aborted request).
+            delete whoSangThatHydrationRef.current[songId]
+        }
     }, [isHost, roomSettings?.mode, currentSong?.id, gameState?.current_round_index, whoSangThatData?.options?.length, code])
 
     // --------------------------------------------------------------------------------
@@ -868,7 +882,7 @@ export default function GamePage() {
         const nowSeconds = Math.floor(Date.now() / 1000)
 
         // Auto-Fetch: If currently no preview URL, try to resolve it immediately
-        if (!hasValidPreview && currentSong?.id && !audioPrefetchInFlightRef.current[currentSong.id]) {
+        if (!hasValidPreview && currentSong?.id && !isResolutionInFlight(currentSong.id)) {
             const lastAttempt = audioErrorRef.current[currentSong.id] || 0
             if (Date.now() - lastAttempt > 5000) {
                 console.log('[Audio] Missing preview URL, attempting immediate resolution...')
@@ -1306,8 +1320,18 @@ export default function GamePage() {
     const submitGuess = async () => {
         if (hasSubmitted || gameState?.phase !== 'playing') return
         if (gameState?.is_sudden_death && !isDuelingPlayer) return
+        // Spectators never submit. Double-gated here because the input is also
+        // disabled — but a malicious client could still call this, so we defend.
+        if (isSpectator) return
 
-        const currentGuess = guess // from state
+        // Hard cap — defensive against anyone poking past the input maxLength
+        // (e.g. devtools, paste events on older browsers). Server also caps.
+        const MAX_GUESS_LEN = 100
+        const currentGuess = {
+            ...guess,
+            artist: typeof guess?.artist === 'string' ? guess.artist.slice(0, MAX_GUESS_LEN) : '',
+            title: typeof guess?.title === 'string' ? guess.title.slice(0, MAX_GUESS_LEN) : ''
+        }
         setHasSubmitted(true)
         soundManager.play('tick')
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -1331,10 +1355,10 @@ export default function GamePage() {
     // Auto-Submit when time runs out (Client Side)
     // Trigger at 0, relying on Host grace period to accept it
     useEffect(() => {
-        if (gameState?.phase === 'playing' && gameState.round_start_time && timeLeft <= 0 && !hasSubmitted && isDuelingPlayer) {
+        if (gameState?.phase === 'playing' && gameState.round_start_time && timeLeft <= 0 && !hasSubmitted && isDuelingPlayer && !isSpectator) {
             submitGuess()
         }
-    }, [gameState?.phase, gameState?.round_start_time, timeLeft, hasSubmitted, isDuelingPlayer])
+    }, [gameState?.phase, gameState?.round_start_time, timeLeft, hasSubmitted, isDuelingPlayer, isSpectator])
 
     // --------------------------------------------------------------------------------
     // 4. HOST LOGIC (State Machine)
@@ -1349,9 +1373,23 @@ export default function GamePage() {
         if (!isHost || gameState?.phase !== 'playing') return
         if (!gameState?.round_start_time) return  // Round not started yet — ignore stale has_submitted
 
-        const activePlayers = (gameState?.is_sudden_death && duelingIds.length > 0)
+        // Exclude spectators and disconnected (past grace) players — we'd
+        // otherwise wait forever for a guess that will never come.
+        const DISCONNECT_GRACE_MS = 60_000
+        const nowForActive = Date.now()
+        const isLiveParticipant = (p: Player) => {
+            if (p.is_spectator) return false
+            const disc = p.disconnected_at
+            if (disc) {
+                const ms = typeof disc === 'number' ? disc : new Date(disc).getTime()
+                if (Number.isFinite(ms) && nowForActive - ms > DISCONNECT_GRACE_MS) return false
+            }
+            return true
+        }
+        const basePlayers = (gameState?.is_sudden_death && duelingIds.length > 0)
             ? players.filter(p => duelingIds.includes(p.id))
             : players
+        const activePlayers = basePlayers.filter(isLiveParticipant)
 
         const allSubmitted = activePlayers.length > 0 && activePlayers.every(p => {
             if (!p.has_submitted) return false
@@ -1429,24 +1467,31 @@ export default function GamePage() {
         const revealMs = 5000
 
         setTimeout(async () => {
-            const currentGameState = gameStateRef.current
-            const currentPlayers = playersRef.current
-            // Safety checks
-            if (!currentGameState || !currentPlayers) return
+            try {
+                const currentGameState = gameStateRef.current
+                const currentPlayers = playersRef.current
+                // Safety checks
+                if (!currentGameState || !currentPlayers) return
 
-            const code = params.code as string
+                const code = params.code as string
 
-            const nextRoundIndex = currentGameState.current_round_index + 1
-            const nextSong = currentGameState.playlist?.[nextRoundIndex]
-            if (nextSong) {
-                const ready = await ensureRoundAudioReady(code, nextRoundIndex)
-                if (!ready) {
-                    hasScheduledNextRoundRef.current = false
-                    return
+                const nextRoundIndex = currentGameState.current_round_index + 1
+                const nextSong = currentGameState.playlist?.[nextRoundIndex]
+                if (nextSong) {
+                    const ready = await ensureRoundAudioReady(code, nextRoundIndex)
+                    if (!ready) {
+                        hasScheduledNextRoundRef.current = false
+                        return
+                    }
                 }
-            }
 
-            await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
+                await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
+            } catch (e) {
+                // processNextRound failures would otherwise become unhandled rejections —
+                // swallow here and reset the scheduler lock so retries are possible.
+                console.error('[Reveal] Next round scheduling failed', e)
+                hasScheduledNextRoundRef.current = false
+            }
         }, revealMs)
 
     }, [gameState?.phase, isHost]) // Runs when phase changes to reveal
@@ -1482,21 +1527,26 @@ export default function GamePage() {
 
                 hasScheduledNextRoundRef.current = true
                 setTimeout(async () => {
-                    const currentGameState = gameStateRef.current
-                    const currentPlayers = playersRef.current
-                    if (!currentGameState || !currentPlayers) return
+                    try {
+                        const currentGameState = gameStateRef.current
+                        const currentPlayers = playersRef.current
+                        if (!currentGameState || !currentPlayers) return
 
-                    const nextRoundIndex = currentGameState.current_round_index + 1
-                    const nextSong = currentGameState.playlist?.[nextRoundIndex]
-                    if (nextSong) {
-                        const ready = await ensureRoundAudioReady(code, nextRoundIndex)
-                        if (!ready) {
-                            hasScheduledNextRoundRef.current = false
-                            return
+                        const nextRoundIndex = currentGameState.current_round_index + 1
+                        const nextSong = currentGameState.playlist?.[nextRoundIndex]
+                        if (nextSong) {
+                            const ready = await ensureRoundAudioReady(code, nextRoundIndex)
+                            if (!ready) {
+                                hasScheduledNextRoundRef.current = false
+                                return
+                            }
                         }
-                    }
 
-                    await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
+                        await processNextRound(code, currentGameState, currentPlayers, roomSettings || {})
+                    } catch (e) {
+                        console.error('[SuddenDeath] Next round scheduling failed', e)
+                        hasScheduledNextRoundRef.current = false
+                    }
                 }, delay)
             })
             .catch((e) => {
@@ -1640,7 +1690,14 @@ export default function GamePage() {
     // A. Finished -> Podium
     if (status === 'finished') {
         localStorage.removeItem('bb_active_game')
-        return <GameRecap roomCode={code} players={players} />
+        // Inner boundary: if Recap crashes (e.g. confetti lib, stats compute),
+        // keep the outer boundary available for retry without re-mounting the
+        // whole game subtree.
+        return (
+            <GameErrorBoundary boundaryName="GameRecap">
+                <GameRecap roomCode={code} players={players} />
+            </GameErrorBoundary>
+        )
     }
 
     if (!gameState || !currentSong) return <div className="flex-center" style={{ height: '100dvh' }}>Loading Game...</div>
@@ -1914,7 +1971,11 @@ export default function GamePage() {
             {/* Top HUD */}
             <div className="game-hud">
                 <div className="hud-bar">
-                    <div className="hud-chip hud-chip--round">
+                    <div
+                        className="hud-chip hud-chip--round"
+                        role="status"
+                        aria-label={`Round ${displayRound} of ${roomSettings?.rounds ?? '?'}${gameState.is_sudden_death ? ', sudden death' : ''}${isBulletRound ? ', bullet round' : ''}`}
+                    >
                         <span className="hud-chip__eyebrow">Round</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span className="hud-chip__value">{displayRound} / {roomSettings?.rounds}</span>
@@ -1971,7 +2032,12 @@ export default function GamePage() {
                         </div>
                     </div>
 
-                    <div className={`timer-pill ${gameState.phase === 'playing' && !isWaitingForAudio && timeLeft <= 3 ? 'countdown-pulse' : ''}`}>
+                    <div
+                        className={`timer-pill ${gameState.phase === 'playing' && !isWaitingForAudio && timeLeft <= 3 ? 'countdown-pulse' : ''}`}
+                        role="timer"
+                        aria-live="off"
+                        aria-label={timeSynced ? `${Math.ceil(Math.max(0, timeLeft))} seconds remaining` : 'Syncing timer'}
+                    >
                         {timeSynced ? Math.ceil(Math.max(0, timeLeft)) : '...'}
                     </div>
                 </div>
@@ -2029,6 +2095,8 @@ export default function GamePage() {
                         <div
                             className={`vinyl-container ${isPlaying ? 'spinning' : ''} ${isReveal ? 'reveal reveal-pop' : ''}`}
                             style={{ marginBottom: isReveal ? '26px' : '32px', transition: 'box-shadow 0.5s ease', boxShadow: glowBoxShadow }}
+                            role="img"
+                            aria-label={isReveal ? `Now revealing: ${effectiveSong.track_name} by ${effectiveSong.artist_name}` : isPlaying ? 'Song preview playing' : 'Song preview paused'}
                         >
                             <div className="vinyl-grooves" />
                             <div className={`vinyl-label ${isReveal ? 'reveal' : ''}`}>
@@ -2108,6 +2176,11 @@ export default function GamePage() {
                             <h3 className="reveal-slide" style={{ fontSize: 'clamp(1rem, 2.3vw, 1.3rem)', color: '#ccc', animationDelay: '0.2s' }}>
                                 {effectiveSong.artist_name}
                             </h3>
+                            {isYearGuesser && gameState.current_round_answer?.release_year != null && (
+                                <div className="reveal-slide" style={{ marginTop: '10px', fontSize: 'clamp(1.4rem, 3.2vw, 2rem)', fontWeight: 900, color: '#60a5fa', letterSpacing: '0.12em', animationDelay: '0.3s' }}>
+                                    {gameState.current_round_answer.release_year}
+                                </div>
+                            )}
                             {/* We use 'songPicker' derived from currentSong mostly. Need to check if effectiveSong differs. */}
                             {/* Song credit — shown in all modes */}
                             {(() => {
@@ -2338,7 +2411,10 @@ export default function GamePage() {
                                             type="text" placeholder="Guess the Artist..."
                                             className="input-field"
                                             value={guess.artist}
-                                            onChange={(e) => setGuess(prev => ({ ...prev, artist: e.target.value }))}
+                                            maxLength={100}
+                                            aria-label="Artist guess"
+                                            title="Press Enter to submit or move to next field, Esc to close suggestions"
+                                            onChange={(e) => setGuess(prev => ({ ...prev, artist: e.target.value.slice(0, 100) }))}
                                             onFocus={() => setArtistFocused(true)}
                                             onBlur={() => setTimeout(() => setArtistFocused(false), 150)}
                                             onKeyDown={(e) => {
@@ -2378,7 +2454,10 @@ export default function GamePage() {
                                         type="text" placeholder={isAlbumArt ? "Guess the Album Name..." : "Guess the Song Title..."}
                                         className="input-field"
                                         value={guess.title}
-                                        onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value }))}
+                                        maxLength={100}
+                                        aria-label={isAlbumArt ? 'Album name guess' : 'Song title guess'}
+                                        title="Press Enter to submit"
+                                        onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value.slice(0, 100) }))}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
                                                 e.preventDefault()
@@ -2387,6 +2466,37 @@ export default function GamePage() {
                                         }}
                                         disabled={hasSubmitted || !canGuess}
                                     />
+                                )}
+                                {isYearGuesser && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', textAlign: 'center', letterSpacing: '0.04em' }}>
+                                            3 pts exact · 2 pts ±1 year · 1 pt ±2 years
+                                        </div>
+                                        <input
+                                            type="number"
+                                            inputMode="numeric"
+                                            min={1900}
+                                            max={new Date().getFullYear() + 1}
+                                            step={1}
+                                            placeholder="Guess the Year..."
+                                            className="input-field"
+                                            value={guess.title}
+                                            aria-label="Release year guess"
+                                            title="Press Enter to submit"
+                                            onChange={(e) => {
+                                                const digits = e.target.value.replace(/\D/g, '').slice(0, 4)
+                                                setGuess(prev => ({ ...prev, title: digits, artist: '' }))
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault()
+                                                    submitGuess()
+                                                }
+                                            }}
+                                            disabled={hasSubmitted || !canGuess}
+                                            style={{ textAlign: 'center', fontSize: '1.4rem', fontWeight: 700, letterSpacing: '0.1em' }}
+                                        />
+                                    </div>
                                 )}
                                 {!isGuessWho && !isWhoSangThat && !isChillRating && (
                                     <button
@@ -2460,12 +2570,25 @@ export default function GamePage() {
                             {isSubmitter && !isReveal && <Check size={16} className="text-primary" />}
                             {isReveal && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: resultClass === 'correct' ? '#1ed760' : (isChillRating ? '#ccc' : '#e91429') }}>
-                                        {isChillRating ? (p.last_guess?.title ? `${p.last_guess.title}/10` : '—') : (resultClass === 'correct' ? `+${p.last_round_points ?? 0}` : '0')}
-                                    </span>
-                                    <span style={{ fontSize: '0.9rem' }}>
-                                        {isChillRating ? (p.last_guess?.title ? '⭐' : '') : (resultClass === 'correct' ? '✅' : '❌')}
-                                    </span>
+                                    {isYearGuesser ? (
+                                        <>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                                                {p.last_guess?.title || '—'}
+                                            </span>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: (p.last_round_points ?? 0) > 0 ? '#1ed760' : '#e91429' }}>
+                                                +{p.last_round_points ?? 0}
+                                            </span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: resultClass === 'correct' ? '#1ed760' : (isChillRating ? '#ccc' : '#e91429') }}>
+                                                {isChillRating ? (p.last_guess?.title ? `${p.last_guess.title}/10` : '—') : (resultClass === 'correct' ? `+${p.last_round_points ?? 0}` : '0')}
+                                            </span>
+                                            <span style={{ fontSize: '0.9rem' }}>
+                                                {isChillRating ? (p.last_guess?.title ? '⭐' : '') : (resultClass === 'correct' ? '✅' : '❌')}
+                                            </span>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>

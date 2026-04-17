@@ -49,7 +49,19 @@ export async function POST(request: Request) {
 
         const roomData = roomSnap.val()
         const fullSong = secretSnap.val() as SongItem
-        const gameState = roomData.game_state as GameState
+        const gameState = roomData?.game_state as GameState | undefined
+
+        // Runtime guards — Firebase data can be partial if a write landed mid-operation
+        // or if schema has drifted. Fail with clear 4xx/5xx rather than crashing below.
+        if (!fullSong || typeof fullSong !== 'object' || !fullSong.id) {
+            console.error(`[Reveal] Malformed secret payload for room ${roomCode} round ${roundIndex}`, fullSong)
+            return NextResponse.json({ error: 'Malformed song secret' }, { status: 500 })
+        }
+        if (!gameState || typeof gameState !== 'object' || !Array.isArray(gameState.playlist)) {
+            console.error(`[Reveal] Malformed game_state for room ${roomCode}`, gameState)
+            return NextResponse.json({ error: 'Malformed game state' }, { status: 500 })
+        }
+
         const players = roomData.players ? Object.values(roomData.players) as any[] : []
         const settings = roomData.settings
         const allSongs = Object.values(roomData.songs || {}) as SongItem[]
@@ -180,6 +192,25 @@ export async function POST(request: Request) {
             return (gameState.dueling_player_ids || []).includes(pid)
         }
 
+        // Spectators are present in the players map so the spectator count is
+        // visible, but they never score. Also sweep any slot that's been
+        // disconnected past the 60s grace window — they forfeit this round's
+        // scoring but stay in the map until they reconnect or a fresh round
+        // clears them via a different path.
+        const DISCONNECT_GRACE_MS = 60_000
+        const now = Date.now()
+        const isParticipating = (p: any): boolean => {
+            if (p?.is_spectator) return false
+            const discRaw = p?.disconnected_at
+            if (discRaw) {
+                const discMs = typeof discRaw === 'number' ? discRaw : new Date(discRaw).getTime()
+                if (Number.isFinite(discMs) && now - discMs > DISCONNECT_GRACE_MS) {
+                    return false
+                }
+            }
+            return true
+        }
+
         players.forEach(p => {
             // Default: Clear stats
             let points = 0
@@ -187,10 +218,19 @@ export async function POST(request: Request) {
             let correctArtist = false
             let clampedTimeTaken = totalTime
 
-            const g = p.last_guess || { artist: '', title: '' }
+            // Server-side hard cap to defend against malicious clients writing
+            // oversized strings directly into Firebase (~100 chars matches
+            // realistic song/artist names; 1KB is still well below DB abuse).
+            const MAX_GUESS_LEN = 100
+            const rawGuess = p.last_guess || { artist: '', title: '' }
+            const g = {
+                ...(typeof rawGuess === 'object' ? rawGuess : {}),
+                artist: typeof rawGuess?.artist === 'string' ? rawGuess.artist.slice(0, MAX_GUESS_LEN) : '',
+                title: typeof rawGuess?.title === 'string' ? rawGuess.title.slice(0, MAX_GUESS_LEN) : ''
+            }
 
-            // Only calculate real score if active
-            if (isPlayerActive(p.id)) {
+            // Only calculate real score if active, not a spectator, and not past grace
+            if (isPlayerActive(p.id) && isParticipating(p)) {
                 const submittedRaw = p.submitted_at
                 const submittedAtMs = typeof submittedRaw === 'number'
                     ? submittedRaw
@@ -233,6 +273,32 @@ export async function POST(request: Request) {
                     correctTitle = false
                     correctArtist = false
                     points = 0
+                } else if (mode === 'year_guesser') {
+                    // Year Guesser: guess.title holds the year the player typed in.
+                    // The answer comes from fullSong.release_year (captured at import
+                    // time). We pass year-as-string into calculateScore via the
+                    // `title` field so the schema stays consistent with other modes.
+                    const answerYear = typeof fullSong.release_year === 'number'
+                        ? fullSong.release_year
+                        : null
+                    if (answerYear == null) {
+                        // Missing metadata → no points possible, don't penalize
+                        points = 0
+                        correctTitle = false
+                        correctArtist = false
+                    } else {
+                        const scoreData = calculateScore(
+                            { artist: '', title: g.title },
+                            { artist: '', title: String(answerYear) },
+                            timeLeftForPlayer,
+                            totalTime,
+                            mode,
+                            isSuddenDeath
+                        )
+                        points = scoreData.points
+                        correctTitle = scoreData.correctTitle
+                        correctArtist = false
+                    }
                 } else {
                     const scoreData = calculateScore(
                         { artist: g.artist, title: g.title },
@@ -282,7 +348,8 @@ export async function POST(request: Request) {
             artist: fullSong.artist_name,
             title: fullSong.track_name,
             cover_url: fullSong.album_cover_url || fullSong.cover_url,
-            album_name: fullSong.album_name || null
+            album_name: fullSong.album_name || null,
+            release_year: typeof fullSong.release_year === 'number' ? fullSong.release_year : null
         }
 
         // Backfill playlist item for history consistency
@@ -328,6 +395,7 @@ export async function POST(request: Request) {
                                 const secretSnap = await get(secretRef)
                                 if (!secretSnap.exists()) return
                                 const nextSong = secretSnap.val() as SongItem
+                                if (!nextSong?.id || !nextSong.artist_name || !nextSong.track_name) return
 
                                 const cacheRef = ref(db, `rooms/${roomCode}/lyrics_cache/${nextSong.id}`)
                                 const cacheSnap = await get(cacheRef)
@@ -363,6 +431,7 @@ export async function POST(request: Request) {
                     if (nextSecretSnap.exists()) {
                         promises.push((async () => {
                             const nextSong = nextSecretSnap.val() as SongItem
+                            if (!nextSong?.id || !nextSong.artist_name || !nextSong.track_name) return
                             const cacheRef = ref(db, `rooms/${roomCode}/lyrics_cache/${nextSong.id}`)
                             const cacheSnap = await get(cacheRef)
 
@@ -466,7 +535,10 @@ export async function POST(request: Request) {
                 const nextRoundIndex = roundIndex + 1
                 const nextSecretSnap = await get(ref(db, `room_secrets/${roomCode}/${nextRoundIndex}`))
                 if (nextSecretSnap.exists()) {
-                    await ensureWhoSangThatExtras(nextSecretSnap.val() as SongItem, nextRoundIndex)
+                    const nextSong = nextSecretSnap.val() as SongItem
+                    if (nextSong?.id && nextSong.artist_name && nextSong.track_name) {
+                        await ensureWhoSangThatExtras(nextSong, nextRoundIndex)
+                    }
                 }
             } catch (e) {
                 console.error('Who Sang That extras fetch error', e)
