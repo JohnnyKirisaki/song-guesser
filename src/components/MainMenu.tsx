@@ -95,7 +95,7 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
         }
     }
 
-    const handleJoinRoom = async (e?: React.FormEvent) => {
+    const handleJoinRoom = async (e?: React.FormEvent, asSpectator: boolean = false) => {
         e?.preventDefault()
         if (!joinCode) return
 
@@ -111,8 +111,11 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                 return
             }
 
-            // We just redirect. The Lobby component will handle adding the user to "players" list.
-            router.push(`/room/${code}`)
+            // Spectator mode: pass ?spectate=1 so /room/[code] marks the user
+            // as a watcher rather than a player. The lobby UI shows a
+            // "Spectator" badge and the game page hides the guess inputs.
+            const target = asSpectator ? `/room/${code}?spectate=1` : `/room/${code}`
+            router.push(target)
 
         } catch (error) {
             console.error('Error joining room:', error)
@@ -332,6 +335,17 @@ export default function MainMenu({ onCreateRoom, onJoinRoom }: {
                             />
                             <button type="submit" className="btn-primary" style={{ width: '100%' }}>
                                 {loading ? 'Joining...' : 'Join Game'}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-glass"
+                                style={{ width: '100%', marginTop: '10px' }}
+                                onClick={() => handleJoinRoom(undefined, true)}
+                                disabled={loading || !joinCode}
+                                aria-label="Join as spectator — watch without playing"
+                                title="Watch the game live without playing"
+                            >
+                                {loading ? '...' : 'Watch as Spectator'}
                             </button>
                         </form>
                     </div>

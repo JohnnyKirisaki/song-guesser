@@ -247,6 +247,7 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
 
     let candidates: any[] = []
     let lastError: string | null = null
+    let hitQuotaInSearch = false
     const queriesUsed: string[] = []
 
     // --- 0. ISRC Match (Golden Ticket) ---
@@ -386,7 +387,11 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
         } catch (e: any) {
             console.warn(`[Deezer] Search failed for ${q}:`, e)
             lastError = e.message
-            if (isQuotaExceededError(e)) break
+            if (isQuotaExceededError(e)) {
+                hitQuotaInSearch = true
+                // Skip remaining Deezer queries; fall through to iTunes fallback immediately.
+                break
+            }
         }
     }
 
@@ -529,20 +534,23 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
     } else {
         const itunesMatch = await resolveViaItunes(track)
         if (itunesMatch) {
+            const warning = hitQuotaInSearch ? 'iTunes Fallback (Deezer quota exceeded)' : 'iTunes Fallback'
             result = {
                 input: track,
                 resolved: true,
                 deezer: itunesMatch,
                 score: 80,
-                warnings: ['iTunes Fallback'],
+                warnings: [warning],
                 candidates: debugCandidates,
                 debug: { queriesUsed, candidatesFound: candidates.length }
             }
         } else {
-            const failReason = !bestMatch
-                ? (lastError ? `Error: ${lastError}` : 'No candidates found')
-                : !artistMatched ? 'Artist mismatch'
-                    : 'Score too low'
+            const failReason = hitQuotaInSearch
+                ? 'Deezer quota exceeded (iTunes fallback also failed)'
+                : !bestMatch
+                    ? (lastError ? `Error: ${lastError}` : 'No candidates found')
+                    : !artistMatched ? 'Artist mismatch'
+                        : 'Score too low'
             result = {
                 input: track,
                 resolved: false,
@@ -554,7 +562,12 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
         }
     }
 
-    set(ref(db, dbCachePath), result)
+    // Don't cache unresolved quota failures — next attempt should retry with a fresh
+    // quota window. The existing cache-check at line ~206 already refuses to return
+    // quota-flagged failures, but we avoid writing them here to keep the cache clean.
+    if (result.resolved || !hitQuotaInSearch) {
+        set(ref(db, dbCachePath), result)
+    }
     return result
 }
 

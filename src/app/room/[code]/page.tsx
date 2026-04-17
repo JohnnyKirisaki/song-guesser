@@ -1,15 +1,16 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { db } from '@/lib/firebase'
-import { ref, get, set, onDisconnect, update, child } from 'firebase/database'
+import { ref, get, set, onDisconnect, update, child, serverTimestamp } from 'firebase/database'
 import { useUser } from '@/context/UserContext'
 import Lobby from '@/components/Lobby'
 import Onboarding from '@/components/Onboarding'
 
 export default function RoomLobby() {
     const params = useParams()
+    const searchParams = useSearchParams()
     const code = params.code as string
     const { profile } = useUser()
     const router = useRouter()
@@ -23,6 +24,12 @@ export default function RoomLobby() {
             const roomRef = ref(db, `rooms/${code}`)
             const playerRef = ref(db, `rooms/${code}/players/${profile.id}`)
 
+            // Spectator mode is a URL flag (?spectate=1) so the "Watch" button
+            // on MainMenu can route straight to /room/XYZ?spectate=1. Also
+            // honor existing spectator status on rejoin so a refresh doesn't
+            // silently promote a spectator into a player.
+            const spectateParam = searchParams?.get('spectate') === '1'
+
             try {
                 // 1. Check if room exists
                 const snapshot = await get(roomRef)
@@ -34,6 +41,7 @@ export default function RoomLobby() {
 
                 const roomVal = snapshot.val()
                 const existingPlayer = roomVal?.players?.[profile.id]
+                const isSpectator = spectateParam || existingPlayer?.is_spectator === true
 
                 // 2. If game is already in progress, rejoin directly
                 if (roomVal.status === 'playing' && roomVal.game_state) {
@@ -54,14 +62,25 @@ export default function RoomLobby() {
                         id: profile.id,
                         username: profile.username,
                         avatar_url: profile.avatar_url,
-                        score: restoredScore,
+                        score: isSpectator ? 0 : restoredScore,
                         is_host: roomVal.host_id === profile.id,
                         is_ready: true,
+                        is_spectator: isSpectator,
                         has_submitted: existingPlayer?.has_submitted ?? false,
                         last_guess: existingPlayer?.last_guess ?? null,
-                        joined_at: existingPlayer?.joined_at ?? Date.now()
+                        joined_at: existingPlayer?.joined_at ?? Date.now(),
+                        // Clear any prior disconnect mark; we're back.
+                        disconnected_at: null,
+                        last_seen: serverTimestamp() as any
                     })
-                    await onDisconnect(playerRef).cancel()
+                    // 60s grace: on network disconnect mid-game, stamp
+                    // `disconnected_at` instead of removing the slot so the
+                    // reveal route + other clients can distinguish "fled" from
+                    // "blip." A periodic sweeper (in game page) cleans up
+                    // slots that stay disconnected past the window.
+                    await onDisconnect(playerRef).update({
+                        disconnected_at: serverTimestamp() as any
+                    })
                     router.push(`/game/${code}`)
                     return
                 }
@@ -74,12 +93,16 @@ export default function RoomLobby() {
                     score: existingPlayer?.score ?? 0,
                     is_ready: existingPlayer?.is_ready ?? false,
                     is_host: roomVal.host_id === profile.id,
-                    joined_at: existingPlayer?.joined_at ?? Date.now()
+                    is_spectator: isSpectator,
+                    joined_at: existingPlayer?.joined_at ?? Date.now(),
+                    disconnected_at: null,
+                    last_seen: serverTimestamp() as any
                 }
 
                 await update(playerRef, playerData)
 
-                // 4. Setup Presence — remove on disconnect in lobby only
+                // 4. Setup Presence — in lobby, remove cleanly on disconnect
+                // (no grace period needed, the game hasn't started).
                 await onDisconnect(playerRef).remove()
 
                 setRoomData(roomVal)
@@ -99,7 +122,7 @@ export default function RoomLobby() {
         return () => {
             // Optional cleanup
         }
-    }, [code, profile, router])
+    }, [code, profile, router, searchParams])
 
     if (!profile) return (
         <div style={{ height: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

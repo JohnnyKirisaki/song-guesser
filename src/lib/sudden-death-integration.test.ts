@@ -40,8 +40,8 @@ describe('Full Game Flow: Ties -> Sudden Death -> Win', () => {
 
         // Players (2 Players)
         const players: Player[] = [
-            { id: 'p1', username: 'Player1', score: 0, has_submitted: false, sudden_death_score: 0 },
-            { id: 'p2', username: 'Player2', score: 0, has_submitted: false, sudden_death_score: 0 }
+            { id: 'p1', username: 'Player1', avatar_url: '', score: 0, has_submitted: false, sudden_death_score: 0 },
+            { id: 'p2', username: 'Player2', avatar_url: '', score: 0, has_submitted: false, sudden_death_score: 0 }
         ]
 
         // Mock Get for room data (needed for sudden death song pool)

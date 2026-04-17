@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Clock, Zap, Music, UserPlus } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { soundManager } from '@/lib/sounds'
@@ -11,15 +11,7 @@ import { db } from '@/lib/firebase'
 import { ref, get, remove, set, onValue, update } from 'firebase/database'
 import { generateRoomCode } from '@/lib/game-utils'
 import UserPopover from './UserPopover'
-
-type Player = {
-    id: string
-    username: string
-    avatar_url: string
-    score: number
-    sudden_death_score?: number
-    is_host?: boolean
-}
+import type { Player } from '@/lib/types'
 
 type RoundGuess = {
     user_id: string
@@ -64,6 +56,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
     const [popoverAnchor, setPopoverAnchor] = useState<{ x: number, y: number } | null>(null)
     const [nextRoomCode, setNextRoomCode] = useState<string | null>(null)
     const [creatingRoom, setCreatingRoom] = useState(false)
+    const playAgainInFlightRef = useRef(false)
     const [personalRankings, setPersonalRankings] = useState<{ song: RoundHistory, rating: number }[]>([])
     const [mode, setMode] = useState<string>('normal')
 
@@ -90,6 +83,9 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
 
     const handlePlayAgain = async () => {
         if (!profile) return
+        // Ref-based guard prevents double-fire even if React hasn't re-rendered yet
+        if (playAgainInFlightRef.current) return
+        playAgainInFlightRef.current = true
         try {
             setCreatingRoom(true)
             const newCode = generateRoomCode()
@@ -131,6 +127,7 @@ export default function GameRecap({ roomCode, players }: { roomCode: string, pla
         } catch (e) {
             console.error("Failed to create next room", e)
             setCreatingRoom(false)
+            playAgainInFlightRef.current = false
         }
     }
 

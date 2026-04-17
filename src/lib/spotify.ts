@@ -13,6 +13,8 @@ export type SpotifyTrack = {
     preview_url: string | null
     album_name?: string | null
     album_cover_url?: string | null
+    /** Release year (e.g. 2004). Null when upstream metadata is missing it. */
+    release_year?: number | null
 }
 
 export type FailedTrack = { artist: string, title: string }
@@ -49,7 +51,16 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
                 cover_url: t.deezer.cover_url,
                 preview_url: t.deezer.preview_url ? t.deezer.preview_url.replace(/^http:\/\//i, 'https://') : null,
                 album_name: t.input?.album || t.deezer.album_title || null,
-                album_cover_url: t.input?.albumCoverUrl || t.deezer.cover_url || null
+                album_cover_url: t.input?.albumCoverUrl || t.deezer.cover_url || null,
+                // Year Guesser mode relies on this. Prefer the Spotify-side
+                // year (most accurate), fall back to Deezer release_date if
+                // present. parseInt handles both "2004" and "2004-05-13".
+                release_year: (() => {
+                    const raw = t.input?.year || t.deezer?.release_date || t.deezer?.album_release_date || null
+                    if (!raw) return null
+                    const parsed = parseInt(String(raw).slice(0, 4), 10)
+                    return Number.isFinite(parsed) && parsed > 1900 && parsed <= new Date().getFullYear() + 1 ? parsed : null
+                })()
             }))
 
         const failed = data.tracks
@@ -254,7 +265,8 @@ export async function addSongsToRoom(roomCode: string, userId: string, tracks: S
             album_cover_url: t.album_cover_url || null,
             cover_url: t.cover_url || null,
             preview_url: t.preview_url,
-            picked_by_user_id: userId
+            picked_by_user_id: userId,
+            release_year: t.release_year ?? null
         }
     })
 

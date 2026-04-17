@@ -27,8 +27,22 @@ export async function fetchLyrics(artist: string, title: string): Promise<string
             if (!res.ok) {
                 if (res.status === 404) return null
                 if (res.status === 429) {
-                    console.error('[Lyrics] RATE LIMIT HIT (429)')
-                    throw new Error('RATE_LIMIT_HIT')
+                    console.warn(`[Lyrics] Rate limit (429) for ${artist} - ${title} | Attempt ${attempt}`)
+                    // Treat 429 as a retryable error with exponential backoff.
+                    // Respect Retry-After header if server provides one.
+                    const retryAfter = parseInt(res.headers.get('retry-after') || '0', 10)
+                    const backoff = retryAfter > 0
+                        ? Math.min(10000, retryAfter * 1000)
+                        : Math.min(8000, 1000 * Math.pow(2, attempt - 1))
+                    lastError = new Error(`429 rate limit`)
+                    if (attempt <= maxRetries) {
+                        await new Promise(r => setTimeout(r, backoff))
+                        continue
+                    }
+                    // Out of retries on 429 → return null rather than throw, so callers
+                    // don't abort game start over a transient limiter.
+                    console.error(`[Lyrics] Rate limit persisted after ${attempt} attempts for ${artist} - ${title}`)
+                    return null
                 }
                 throw new Error(`Lyrics API status: ${res.status}`)
             }
@@ -65,8 +79,6 @@ export async function fetchLyrics(artist: string, title: string): Promise<string
             return snippet || null
 
         } catch (error: any) {
-            if (error.message === 'RATE_LIMIT_HIT') throw error 
-            
             console.warn(`[Lyrics] ${artist} - ${title} | Attempt ${attempt} failed:`, error.message)
             lastError = error
 

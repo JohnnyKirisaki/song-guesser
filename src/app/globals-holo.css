@@ -334,6 +334,32 @@ button {
     transform: translateY(0) scale(0.98);
 }
 
+/* A11y: visible focus ring so keyboard users see which glass button is active.
+   :focus-visible targets only keyboard focus (not mouse clicks) to keep the
+   aesthetic clean. Primary green ring matches form input focus style. */
+.btn-glass:focus-visible,
+.btn-primary:focus-visible,
+.round-pill:focus-visible,
+.timer-pill:focus-visible,
+.vinyl-container:focus-visible {
+    outline: none;
+    box-shadow:
+        0 0 0 3px rgba(29, 185, 84, 0.45),
+        0 4px 18px rgba(29, 185, 84, 0.25),
+        var(--shadow-1);
+    border-color: rgba(29, 185, 84, 0.6);
+}
+
+/* Honor user reduced-motion preference on the btn-glass hover transform. */
+@media (prefers-reduced-motion: reduce) {
+    .btn-glass:hover,
+    .btn-glass:active,
+    .btn-primary:hover,
+    .btn-primary:active {
+        transform: none;
+    }
+}
+
 /* Import Progress Ring */
 .import-progress {
     display: inline-flex;
