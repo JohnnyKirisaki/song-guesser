@@ -35,6 +35,10 @@ export type GameState = {
         cover_url: string
         album_name?: string | null
         release_year?: number | null
+        /** Next-line answer for lyric_completion reveal screen. */
+        lyric_answer?: string | null
+        /** Deezer popularity shown on reveal when available. */
+        popularity?: number | null
     }
 }
 
@@ -55,6 +59,18 @@ export type SongItem = {
      * partial release_date. Year-guesser mode skips songs where this is null.
      */
     release_year?: number | null
+    /**
+     * Per-round game mode. Set by the server at start time when the room
+     * mode is 'mixed' — each song gets a randomized sub-mode. When absent,
+     * server/client fall back to settings.mode. Never 'mixed' or 'chill_rating'
+     * itself (those are excluded from the mixed pool).
+     */
+    round_mode?: string | null
+    /**
+     * Deezer popularity rank (0 .. ~1_000_000). Used by the higher-or-lower
+     * mode; absent on legacy imports so consumers must guard.
+     */
+    popularity?: number | null
 }
 
 export type MaskedSongItem = Omit<SongItem, 'artist_name' | 'track_name' | 'cover_url'> & {
@@ -182,7 +198,7 @@ export async function prepareGamePayload(
     const validPlaylist: SongItem[] = []
     const lyricsCache: Record<string, string> = {}
 
-    if (settings.mode === 'lyrics_only' || settings.mode === 'who_sang_that') {
+    if (settings.mode === 'lyrics_only' || settings.mode === 'who_sang_that' || settings.mode === 'lyric_completion') {
         const needed = requestedRounds
         const pool = uniqueSongs.filter(s => !playlist.find(p => p.id === s.id)) // Remaining pool
 

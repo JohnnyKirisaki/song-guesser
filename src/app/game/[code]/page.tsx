@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useMemo, type MouseEvent, type SyntheticEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { db } from '@/lib/firebase'
-import { ref, onValue, update, get, serverTimestamp, onDisconnect, remove } from 'firebase/database'
+import { ref, onValue, update, get, set, serverTimestamp, onDisconnect, remove } from 'firebase/database'
 import { useUser } from '@/context/UserContext'
 import { GameState, SongItem } from '@/lib/game-logic'
 import type { Player } from '@/lib/types'
@@ -74,19 +74,36 @@ function GamePageInner() {
         excerpt: string[]
         options: { name: string, photo: string | null }[]
     } | null>(null)
+    const [emojiData, setEmojiData] = useState<{ emojis: string } | null>(null)
+    const [lyricCompletionData, setLyricCompletionData] = useState<{ challenge: string } | null>(null)
+    // Buzzer mode: when any player submits, we freeze audio for everyone.
+    const [buzzerFrozen, setBuzzerFrozen] = useState(false)
+    // Snippet Reveal: max seconds of the clip currently unlocked. Every round
+    // starts at 1s and only grows when every non-submitted player has voted
+    // to reveal more — so thinkers can't be rushed by a clock.
+    const [snippetCap, setSnippetCap] = useState(1)
+    const [snippetVotes, setSnippetVotes] = useState<Record<string, boolean>>({})
 
     const { volume } = useVolume()
     const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
     const [menuAnchor, setMenuAnchor] = useState<{ x: number, y: number } | null>(null)
 
-    // Derived State Needed for useColor at top-level
+    // Derived State Needed for useColor at top-level.
+    // In mixed mode, the playlist entry carries its own round_mode — honor
+    // that over the room-wide setting so the audio/lyrics readiness checks
+    // line up with the actual round being played.
     const currentSongTemp = gameState?.playlist[gameState?.current_round_index || 0]
-    const isLyricsOnlyTemp = roomSettings?.mode === 'lyrics_only'
-    const isWhoSangThatTemp = roomSettings?.mode === 'who_sang_that'
+    const tempRoundModeRaw = (currentSongTemp as { round_mode?: string | null } | undefined)?.round_mode
+    const tempEffectiveMode = (typeof tempRoundModeRaw === 'string' && tempRoundModeRaw) ? tempRoundModeRaw : roomSettings?.mode
+    const isLyricsOnlyTemp = tempEffectiveMode === 'lyrics_only'
+    const isWhoSangThatTemp = tempEffectiveMode === 'who_sang_that'
     const isRealRevealTemp = gameState?.phase === 'reveal'
     const isAudioStaleTemp = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
-    const isAlbumArtTemp = roomSettings?.mode === 'album_art'
-    const isWaitingForAudioTemp = !isLyricsOnlyTemp && !isWhoSangThatTemp && !isAlbumArtTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStaleTemp || !gameState.round_start_time)
+    const isAlbumArtTemp = tempEffectiveMode === 'album_art'
+    const isLyricCompletionTemp = tempEffectiveMode === 'lyric_completion'
+    const isEmojiCharadesTemp = tempEffectiveMode === 'emoji_charades'
+    const isSnippetRevealTemp = tempEffectiveMode === 'snippet_reveal'
+    const isWaitingForAudioTemp = !isLyricsOnlyTemp && !isWhoSangThatTemp && !isAlbumArtTemp && !isLyricCompletionTemp && !isEmojiCharadesTemp && !isSnippetRevealTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStaleTemp || !gameState.round_start_time)
     const previousSongTemp = (gameState?.current_round_index || 0) > 0 ? gameState?.playlist[(gameState?.current_round_index || 0) - 1] : null
     const effectiveSongTemp = (isWaitingForAudioTemp && previousSongTemp) ? previousSongTemp : currentSongTemp
 
@@ -399,7 +416,13 @@ function GamePageInner() {
     const isHost = profile.id === hostId
     const currentSong = gameState?.playlist[gameState?.current_round_index || 0]
     currentSongRef.current = currentSong
-    const mode = roomSettings?.mode || 'normal'
+    // In mixed mode, each round carries its own sub-mode on the playlist
+    // entry. Fall back to the room setting when absent (legacy rooms, non-
+    // mixed modes). 'mixed' itself should never survive this fallback because
+    // the server always stamps round_mode in mixed-mode rounds.
+    const roomMode = roomSettings?.mode || 'normal'
+    const perRoundMode = (currentSong as { round_mode?: string | null } | undefined)?.round_mode
+    const mode = (typeof perRoundMode === 'string' && perRoundMode) ? perRoundMode : roomMode
     const isLyricsOnly = mode === 'lyrics_only'
     const isArtistOnly = mode === 'artist_only'
     const isSongOnly = mode === 'song_only'
@@ -408,14 +431,22 @@ function GamePageInner() {
     const isAlbumArt = mode === 'album_art'
     const isChillRating = mode === 'chill_rating'
     const isYearGuesser = mode === 'year_guesser'
-    const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat && !isChillRating && !isYearGuesser
-    const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat && !isChillRating && !isYearGuesser
+    const isBuzzer = mode === 'buzzer'
+    const isLyricCompletion = mode === 'lyric_completion'
+    const isEmojiCharades = mode === 'emoji_charades'
+    const isSnippetReveal = mode === 'snippet_reveal'
+    const showTitleInput = mode !== 'artist_only' && !isGuessWho && !isWhoSangThat && !isChillRating && !isYearGuesser && !isLyricCompletion && !isEmojiCharades
+    const showArtistInput = mode !== 'song_only' && !isGuessWho && !isWhoSangThat && !isChillRating && !isYearGuesser && !isLyricCompletion && !isEmojiCharades
+    // Emoji charades uses the title input for the track name — re-enable it
+    // after the broad-exclusion line above. Buzzer needs no override: it's
+    // not in the exclusion list so showTitleInput is already true for it.
+    const showTitleInputFinal = showTitleInput || isEmojiCharades
 
     const isAudioExpected = () => {
         if (!gameState || !currentSong) return false
         if (gameState.phase === 'reveal') return true
         if (gameState.phase !== 'playing') return false
-        return !isLyricsOnly && !isWhoSangThat && !isAlbumArt
+        return !isLyricsOnly && !isWhoSangThat && !isAlbumArt && !isLyricCompletion && !isEmojiCharades
     }
 
     const duelingIds = gameState?.dueling_player_ids || []
@@ -724,7 +755,7 @@ function GamePageInner() {
     // actually populated. Avoids attaching a listener to a path that doesn't
     // exist yet (which is a no-op but spams the SDK's pending-listener map).
     useEffect(() => {
-        const isWhoSangThatMode = roomSettings?.mode === 'who_sang_that'
+        const isWhoSangThatMode = mode === 'who_sang_that'
         if (!isWhoSangThatMode || !currentSong?.id) {
             setWhoSangThatData(null)
             return
@@ -761,10 +792,162 @@ function GamePageInner() {
             cancelled = true
             if (unsub) unsub()
         }
-    }, [currentSong?.id, roomSettings?.mode, code])
+    }, [currentSong?.id, mode, code])
+
+    // Emoji Charades extras: { emojis: string } per song.
+    useEffect(() => {
+        if (mode !== 'emoji_charades' || !currentSong?.id) {
+            setEmojiData(null)
+            return
+        }
+        const extrasRef = ref(db, `rooms/${code}/emoji_charades_extras/${currentSong.id}`)
+        const unsub = onValue(extrasRef, (snap) => {
+            setEmojiData(snap.exists() ? snap.val() : null)
+        })
+        return () => unsub()
+    }, [currentSong?.id, mode, code])
+
+    // Lyric Completion extras: { challenge: string } per song.
+    // The answer line is kept server-side (lyric_completion_secrets) and
+    // never exposed to clients — they just see the prompt line here.
+    useEffect(() => {
+        if (mode !== 'lyric_completion' || !currentSong?.id) {
+            setLyricCompletionData(null)
+            return
+        }
+        const extrasRef = ref(db, `rooms/${code}/lyric_completion_extras/${currentSong.id}`)
+        const unsub = onValue(extrasRef, (snap) => {
+            setLyricCompletionData(snap.exists() ? snap.val() : null)
+        })
+        return () => unsub()
+    }, [currentSong?.id, mode, code])
+
+    // Higher or Lower extras: previous song artist/title/cover/popularity.
+    // Server pre-computes against playlist[i-1] at start time; we just render.
+    // Buzzer: freeze audio the moment ANY player submits. Reset on new round.
+    useEffect(() => {
+        setBuzzerFrozen(false)
+    }, [currentSong?.id, gameState?.phase])
 
     useEffect(() => {
-        const isWhoSangThatMode = roomSettings?.mode === 'who_sang_that'
+        if (mode !== 'buzzer' || gameState?.phase !== 'playing') return
+        if (buzzerFrozen) return
+        const anySubmitted = players.some(p => p.has_submitted && !p.is_spectator)
+        if (anySubmitted) setBuzzerFrozen(true)
+    }, [mode, gameState?.phase, players, buzzerFrozen])
+
+    // When buzzer freezes, pause the audio element for everyone.
+    useEffect(() => {
+        if (mode !== 'buzzer') return
+        if (!buzzerFrozen) return
+        if (audioRef.current && !audioRef.current.paused) {
+            audioRef.current.pause()
+            setIsPlaying(false)
+        }
+    }, [buzzerFrozen, mode])
+
+    // --- Snippet Reveal ---
+    // Consensus-driven reveal: every non-submitted active player has to vote
+    // to unlock more audio. The host owns the authoritative cap + votes in
+    // Firebase; everyone else just reads and posts their own vote.
+
+    // Host: seed the per-song state on round start. `get`-then-write avoids
+    // stomping an existing state on reconnect mid-round.
+    useEffect(() => {
+        if (!isSnippetReveal || !isHost) return
+        if (gameState?.phase !== 'playing' || !currentSong?.id) return
+        const stateRef = ref(db, `rooms/${code}/snippet_reveal_state/${currentSong.id}`)
+        get(stateRef).then(snap => {
+            if (!snap.exists()) {
+                update(stateRef, { cap: 1, skip_votes: null }).catch(() => {})
+            }
+        }).catch(() => {})
+    }, [isSnippetReveal, isHost, gameState?.phase, currentSong?.id, code])
+
+    // Every client subscribes to the authoritative cap + vote map for the
+    // current song. Resets local state when the mode/song changes.
+    useEffect(() => {
+        if (!isSnippetReveal || !currentSong?.id) {
+            setSnippetCap(1)
+            setSnippetVotes({})
+            return
+        }
+        const stateRef = ref(db, `rooms/${code}/snippet_reveal_state/${currentSong.id}`)
+        const unsub = onValue(stateRef, snap => {
+            const v = snap.val() || {}
+            setSnippetCap(typeof v.cap === 'number' && v.cap >= 1 ? v.cap : 1)
+            setSnippetVotes((v.skip_votes && typeof v.skip_votes === 'object') ? v.skip_votes : {})
+        })
+        return () => unsub()
+    }, [isSnippetReveal, currentSong?.id, code])
+
+    // Host: once every non-submitted active player has voted skip, advance
+    // the cap by 1s and clear the votes. Submitted players don't block —
+    // they've already locked in and shouldn't hold up thinkers either way.
+    useEffect(() => {
+        if (!isSnippetReveal || !isHost) return
+        if (gameState?.phase !== 'playing' || !currentSong?.id) return
+        const MAX_SNIPPET_CAP = 30
+        if (snippetCap >= MAX_SNIPPET_CAP) return
+        const DISCONNECT_GRACE_MS = 60_000
+        const nowMs = Date.now()
+        const eligible = players.filter(p => {
+            if (p.is_spectator) return false
+            if (p.has_submitted) return false
+            const disc = p.disconnected_at
+            if (disc) {
+                const ms = typeof disc === 'number' ? disc : new Date(disc).getTime()
+                if (Number.isFinite(ms) && nowMs - ms > DISCONNECT_GRACE_MS) return false
+            }
+            return true
+        })
+        if (eligible.length === 0) return
+        const allVoted = eligible.every(p => !!snippetVotes[p.id])
+        if (!allVoted) return
+        update(ref(db, `rooms/${code}/snippet_reveal_state/${currentSong.id}`), {
+            cap: snippetCap + 1,
+            skip_votes: null
+        }).catch(() => {})
+    }, [isSnippetReveal, isHost, gameState?.phase, currentSong?.id, players, snippetVotes, snippetCap, code])
+
+    // Enforce the cap on the <audio> element: pause the moment playback
+    // crosses the currently-unlocked second, then replay from 0 whenever the
+    // cap grows so each reveal sounds like a fresh clip of the new length.
+    useEffect(() => {
+        if (!isSnippetReveal) return
+        const audio = audioRef.current
+        if (!audio) return
+        const onTime = () => {
+            if (!isSnippetReveal) return
+            if (audio.currentTime >= snippetCap && !audio.paused) {
+                audio.pause()
+            }
+        }
+        audio.addEventListener('timeupdate', onTime)
+        return () => audio.removeEventListener('timeupdate', onTime)
+    }, [isSnippetReveal, snippetCap])
+
+    // Each time the cap advances, restart playback from 0 so the player
+    // hears the full revealed clip at its new length. The timeupdate gate
+    // above re-pauses at the new cap. Guarded on playing phase + no
+    // submission so we don't resume audio that was intentionally stopped
+    // (player already guessed, round ended, etc).
+    useEffect(() => {
+        if (!isSnippetReveal) return
+        if (gameState?.phase !== 'playing') return
+        if (hasSubmitted) return
+        if (snippetCap <= 1) return // first second is kicked off by the initial play path
+        const audio = audioRef.current
+        if (!audio || !audio.src) return
+        try {
+            audio.currentTime = 0
+            const p = audio.play()
+            if (p && typeof p.catch === 'function') p.catch(() => { /* autoplay may block; ignore */ })
+        } catch { /* ignore seek errors on a not-yet-loaded source */ }
+    }, [snippetCap, isSnippetReveal, gameState?.phase, hasSubmitted])
+
+    useEffect(() => {
+        const isWhoSangThatMode = mode === 'who_sang_that'
         const hasOptions = Array.isArray(whoSangThatData?.options) && whoSangThatData.options.length > 0
 
         if (!isHost || !isWhoSangThatMode || !currentSong?.id || gameState?.current_round_index === undefined || hasOptions) {
@@ -808,7 +991,7 @@ function GamePageInner() {
             // (e.g. hasOptions flipped to false during aborted request).
             delete whoSangThatHydrationRef.current[songId]
         }
-    }, [isHost, roomSettings?.mode, currentSong?.id, gameState?.current_round_index, whoSangThatData?.options?.length, code])
+    }, [isHost, mode, currentSong?.id, gameState?.current_round_index, whoSangThatData?.options?.length, code])
 
     // --------------------------------------------------------------------------------
     // 3. COLOR EXTRACTION (Dynamic Backgrounds)
@@ -823,7 +1006,7 @@ function GamePageInner() {
         if (isGuessWho) return <HelpCircle size={48} className="glow-icon" />
         if (isWhoSangThat) return <Mic size={48} className="glow-icon" />
         if (gameState?.is_sudden_death) return <Zap size={48} color="#FFD700" className="glow-icon" />
-        switch (roomSettings?.mode) {
+        switch (mode) {
             case 'album_art':
                 return <ImageIcon size={80} className="glow-icon" />
             case 'chill_rating':
@@ -867,10 +1050,12 @@ function GamePageInner() {
     useEffect(() => {
         if (!gameState || !currentSong) return
 
-        const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
-        const isWhoSangThatMode = roomSettings?.mode === 'who_sang_that'
-        const isAlbumArtMode = roomSettings?.mode === 'album_art'
-        const shouldPlayAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatMode && !isAlbumArtMode && gameState.phase === 'playing')
+        const isLyricsOnly = mode === 'lyrics_only'
+        const isWhoSangThatMode = mode === 'who_sang_that'
+        const isAlbumArtMode = mode === 'album_art'
+        const isLyricCompletionMode = mode === 'lyric_completion'
+        const isEmojiCharadesMode = mode === 'emoji_charades'
+        const shouldPlayAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatMode && !isAlbumArtMode && !isLyricCompletionMode && !isEmojiCharadesMode && gameState.phase === 'playing')
         const previewUrl = typeof currentSong.preview_url === 'string' ? currentSong.preview_url.trim() : ''
         const normalizedPreview = previewUrl.replace(/^http:\/\//i, 'https://')
         const overridePreview = currentSong?.id ? audioPreviewOverrideRef.current[currentSong.id] : null
@@ -1076,7 +1261,7 @@ function GamePageInner() {
                 }
             }
         }
-    }, [gameState?.phase, currentSong, roomSettings?.mode, retryTrigger])
+    }, [gameState?.phase, currentSong, mode, retryTrigger])
 
     // Host auto-starts the timer once audio is playing
     useEffect(() => {
@@ -1084,7 +1269,7 @@ function GamePageInner() {
         if (gameState?.round_start_time) return // Already started
 
         // Modes without round audio should start immediately
-        if (roomSettings?.mode === 'lyrics_only' || roomSettings?.mode === 'who_sang_that' || roomSettings?.mode === 'album_art') {
+        if (mode === 'lyrics_only' || mode === 'who_sang_that' || mode === 'album_art' || mode === 'lyric_completion' || mode === 'emoji_charades') {
             update(ref(db, `rooms/${code}/game_state`), {
                 round_start_time: serverTimestamp() as any
             })
@@ -1098,7 +1283,7 @@ function GamePageInner() {
                 round_start_time: serverTimestamp() as any
             })
         }
-    }, [isHost, gameState?.phase, gameState?.round_start_time, audioStatus, playingSongId, currentSong?.id, roomSettings?.mode, code])
+    }, [isHost, gameState?.phase, gameState?.round_start_time, audioStatus, playingSongId, currentSong?.id, mode, code])
 
     // Reset status on new song
     useEffect(() => {
@@ -1256,7 +1441,7 @@ function GamePageInner() {
                     countdownStarted = true
                     soundManager.play('countdown_tick')
                 }
-                if (t <= 0 && isHost && everSawPositive) {
+                if (t <= 0 && isHost && everSawPositive && !isSnippetReveal) {
                     clearInterval(interval)
                     // Give a 1s Grace Period for clients to auto-submit at t=0
                     setTimeout(() => {
@@ -1277,9 +1462,9 @@ function GamePageInner() {
 
     const AudioStatusIndicator = () => {
         if (!gameState || !currentSong) return null
-        const isLyricsOnly = roomSettings?.mode === 'lyrics_only'
-        const isWhoSangThatAudio = roomSettings?.mode === 'who_sang_that'
-        const isAlbumArtAudio = roomSettings?.mode === 'album_art'
+        const isLyricsOnly = mode === 'lyrics_only'
+        const isWhoSangThatAudio = mode === 'who_sang_that'
+        const isAlbumArtAudio = mode === 'album_art'
 
         // If playing/reveal phase and we expect audio:
         const expectingAudio = gameState.phase === 'reveal' || (!isLyricsOnly && !isWhoSangThatAudio && !isAlbumArtAudio && gameState.phase === 'playing')
@@ -1317,6 +1502,13 @@ function GamePageInner() {
     // --------------------------------------------------------------------------------
     // 3. ACTIONS (Player)
     // --------------------------------------------------------------------------------
+    // Snippet Reveal: cast a vote to unlock the next second of audio. Writing
+    // to our own slot so Firebase rules can scope writes per-player later.
+    const castSkipVote = () => {
+        if (!isSnippetReveal || hasSubmitted || !currentSong?.id) return
+        set(ref(db, `rooms/${code}/snippet_reveal_state/${currentSong.id}/skip_votes/${profile.id}`), true).catch(() => {})
+    }
+
     const submitGuess = async () => {
         if (hasSubmitted || gameState?.phase !== 'playing') return
         if (gameState?.is_sudden_death && !isDuelingPlayer) return
@@ -1327,10 +1519,16 @@ function GamePageInner() {
         // Hard cap — defensive against anyone poking past the input maxLength
         // (e.g. devtools, paste events on older browsers). Server also caps.
         const MAX_GUESS_LEN = 100
-        const currentGuess = {
+        const currentGuess: Record<string, any> = {
             ...guess,
             artist: typeof guess?.artist === 'string' ? guess.artist.slice(0, MAX_GUESS_LEN) : '',
             title: typeof guess?.title === 'string' ? guess.title.slice(0, MAX_GUESS_LEN) : ''
+        }
+        // Snippet Reveal scoring reads how much of the clip was unlocked at
+        // submit time — capture it alongside the guess so the reveal scorer
+        // can reward early guessers.
+        if (isSnippetReveal) {
+            currentGuess.snippet_used = snippetCap
         }
         setHasSubmitted(true)
         soundManager.play('tick')
@@ -1353,12 +1551,14 @@ function GamePageInner() {
     }, [guess])
 
     // Auto-Submit when time runs out (Client Side)
-    // Trigger at 0, relying on Host grace period to accept it
+    // Trigger at 0, relying on Host grace period to accept it.
+    // Snippet Reveal is exempt — its rounds run on consensus votes, not a clock.
     useEffect(() => {
+        if (isSnippetReveal) return
         if (gameState?.phase === 'playing' && gameState.round_start_time && timeLeft <= 0 && !hasSubmitted && isDuelingPlayer && !isSpectator) {
             submitGuess()
         }
-    }, [gameState?.phase, gameState?.round_start_time, timeLeft, hasSubmitted, isDuelingPlayer, isSpectator])
+    }, [gameState?.phase, gameState?.round_start_time, timeLeft, hasSubmitted, isDuelingPlayer, isSpectator, isSnippetReveal])
 
     // --------------------------------------------------------------------------------
     // 4. HOST LOGIC (State Machine)
@@ -1565,7 +1765,8 @@ function GamePageInner() {
         if (!gameState) return
 
         const shouldShowRevealFetch = () => {
-            if (roomSettings?.mode !== 'lyrics_only') return false
+            // Also fires during mixed-mode rounds whose round_mode is lyrics_only.
+            if (mode !== 'lyrics_only') return false
             if (!gameState) return false
 
             if (gameState.is_sudden_death) {
@@ -1784,7 +1985,7 @@ function GamePageInner() {
 
     // If we are "playing" but audio is still loading, look like we are in reveal of PREVIOUS round
     const isAudioStale = audioStatus === 'playing' && playingSongId !== currentSongTemp?.id
-    const isWaitingForAudio = !isLyricsOnlyTemp && !isWhoSangThatTemp && !isAlbumArtTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
+    const isWaitingForAudio = !isLyricsOnlyTemp && !isWhoSangThatTemp && !isAlbumArtTemp && !isLyricCompletionTemp && !isEmojiCharadesTemp && !isSnippetRevealTemp && gameState?.phase === 'playing' && (audioStatus === 'loading' || audioStatus === 'idle' || audioStatus === 'error' || audioLoadError || isAudioStale || !gameState.round_start_time)
 
     // Check if this is the very first moment of the game before round 1 actually starts playing
     const isGameStartWaiting = isWaitingForAudio && (
@@ -1820,6 +2021,12 @@ function GamePageInner() {
         who_sang_that: 'Who Sang That?',
         album_art: 'Album Art',
         chill_rating: 'Chill Rating',
+        year_guesser: 'Year Guesser',
+        mixed: 'Mixed Bag',
+        buzzer: 'Buzzer',
+        lyric_completion: 'Finish the Lyric',
+        emoji_charades: 'Emoji Charades',
+        snippet_reveal: 'Snippet Reveal',
     } as Record<string, string>)[mode] || 'BeatBattle'
 
     const leaveGame = async () => {
@@ -2007,7 +2214,14 @@ function GamePageInner() {
                     <div className="hud-center">
                         <div className="hud-mode-pill">{modeLabel}</div>
                         <div className="hud-progress">
-                            <ProgressBar current={timeSynced ? Math.max(0, timeLeft) : 0} total={roomSettings?.time || 15} />
+                            {isSnippetReveal && gameState.phase === 'playing' ? (
+                                // In Snippet Reveal the bar reflects how much
+                                // of the 30s preview has been unlocked, not a
+                                // countdown. Fills as the cap advances.
+                                <ProgressBar current={Math.min(30, snippetCap)} total={30} />
+                            ) : (
+                                <ProgressBar current={timeSynced ? Math.max(0, timeLeft) : 0} total={roomSettings?.time || 15} />
+                            )}
                         </div>
                         <div className="hud-status-row">
                             {(showRevealLyricsFetch && isLyricsOnly && isRealReveal) && (
@@ -2032,14 +2246,32 @@ function GamePageInner() {
                         </div>
                     </div>
 
-                    <div
-                        className={`timer-pill ${gameState.phase === 'playing' && !isWaitingForAudio && timeLeft <= 3 ? 'countdown-pulse' : ''}`}
-                        role="timer"
-                        aria-live="off"
-                        aria-label={timeSynced ? `${Math.ceil(Math.max(0, timeLeft))} seconds remaining` : 'Syncing timer'}
-                    >
-                        {timeSynced ? Math.ceil(Math.max(0, timeLeft)) : '...'}
-                    </div>
+                    {/* Snippet Reveal runs on consensus votes, not a clock —
+                        show the current clip length in place of the timer. */}
+                    {isSnippetReveal && gameState.phase === 'playing' ? (
+                        <div
+                            className="timer-pill"
+                            style={{
+                                background: 'rgba(96,165,250,0.18)',
+                                color: '#bfdbfe',
+                                border: '1px solid rgba(96,165,250,0.45)',
+                                fontWeight: 700,
+                                letterSpacing: '0.05em',
+                            }}
+                            aria-label={`Snippet length ${snippetCap} seconds`}
+                        >
+                            {snippetCap}s
+                        </div>
+                    ) : (
+                        <div
+                            className={`timer-pill ${gameState.phase === 'playing' && !isWaitingForAudio && timeLeft <= 3 ? 'countdown-pulse' : ''}`}
+                            role="timer"
+                            aria-live="off"
+                            aria-label={timeSynced ? `${Math.ceil(Math.max(0, timeLeft))} seconds remaining` : 'Syncing timer'}
+                        >
+                            {timeSynced ? Math.ceil(Math.max(0, timeLeft)) : '...'}
+                        </div>
+                    )}
                 </div>
             </div >
 
@@ -2080,7 +2312,7 @@ function GamePageInner() {
                 )}
                 <div className={`game-core${isReveal ? ' game-core--reveal' : ''}`}>
                     {/* Album Cover Area (Hidden until Reveal for lyrics/who-sang-that modes) */}
-                    {((!isLyricsOnly && !isWhoSangThat && !isAlbumArt) || isReveal) && (() => {
+                    {((!isLyricsOnly && !isWhoSangThat && !isAlbumArt && !isLyricCompletion && !isEmojiCharades) || isReveal) && (() => {
                         const myResult = players.find(p => p.id === profile?.id)
                         const hasResult = myResult?.last_round_correct_title !== undefined
                         const iGotCorrect = hasResult && (myResult?.last_round_correct_title === true || myResult?.last_round_correct_artist === true)
@@ -2181,6 +2413,19 @@ function GamePageInner() {
                                     {gameState.current_round_answer.release_year}
                                 </div>
                             )}
+
+                            {/* Lyric Completion reveal — show the line players were supposed to type */}
+                            {isLyricCompletion && gameState.current_round_answer?.lyric_answer && (
+                                <div className="reveal-slide" style={{ marginTop: '14px', padding: '12px 22px', borderRadius: '16px', background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.3)', maxWidth: '640px', marginLeft: 'auto', marginRight: 'auto', animationDelay: '0.3s' }}>
+                                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#60a5fa', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '6px' }}>
+                                        Next Line
+                                    </div>
+                                    <div style={{ fontStyle: 'italic', fontSize: 'clamp(1rem, 2vw, 1.25rem)' }}>
+                                        &ldquo;{gameState.current_round_answer.lyric_answer}&rdquo;
+                                    </div>
+                                </div>
+                            )}
+
                             {/* We use 'songPicker' derived from currentSong mostly. Need to check if effectiveSong differs. */}
                             {/* Song credit — shown in all modes */}
                             {(() => {
@@ -2403,6 +2648,63 @@ function GamePageInner() {
                                 </div>
                             )}
 
+                            {/* Emoji Charades — display the emojis above the title input */}
+                            {isEmojiCharades && (
+                                <div
+                                    aria-label="Emoji puzzle"
+                                    style={{
+                                        fontSize: 'clamp(2.2rem, 6vw, 3.5rem)',
+                                        letterSpacing: '0.12em',
+                                        textAlign: 'center',
+                                        padding: '18px 28px',
+                                        borderRadius: '20px',
+                                        background: 'rgba(255,255,255,0.06)',
+                                        border: '1px solid rgba(255,255,255,0.12)',
+                                        maxWidth: '520px',
+                                        width: '100%',
+                                        lineHeight: 1.3,
+                                    }}
+                                >
+                                    {emojiData?.emojis || <span style={{ opacity: 0.45, fontSize: '1rem' }}>Generating puzzle…</span>}
+                                </div>
+                            )}
+
+                            {/* Lyric Completion — show the challenge line; player types the next line.
+                                The song & artist are displayed too since the whole point is
+                                finishing the lyric, not identifying the track. */}
+                            {isLyricCompletion && currentSong && (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', width: '100%', maxWidth: '520px' }}>
+                                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                                        Complete the next line
+                                    </div>
+                                    <div style={{ textAlign: 'center', lineHeight: 1.25 }}>
+                                        <div style={{ fontSize: 'clamp(1.1rem, 2.4vw, 1.5rem)', fontWeight: 800, color: '#fff' }}>
+                                            {currentSong.track_name}
+                                        </div>
+                                        <div style={{ fontSize: 'clamp(0.85rem, 1.6vw, 1rem)', color: '#bbb', marginTop: '2px' }}>
+                                            {currentSong.artist_name}
+                                        </div>
+                                    </div>
+                                    <div className="lyrics-panel" style={{ textAlign: 'center', fontStyle: 'italic', fontSize: 'clamp(1.1rem, 2.4vw, 1.5rem)', lineHeight: 1.6, width: '100%' }}>
+                                        {lyricCompletionData?.challenge
+                                            ? <>&ldquo;{lyricCompletionData.challenge}…&rdquo;</>
+                                            : <span style={{ opacity: 0.45 }}>Loading lyric…</span>}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Buzzer — warn players this freezes on first submit */}
+                            {isBuzzer && !hasSubmitted && !buzzerFrozen && (
+                                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#FFD700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                                    First to lock in freezes the audio!
+                                </div>
+                            )}
+                            {isBuzzer && buzzerFrozen && !hasSubmitted && (
+                                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#ff4c60' }}>
+                                    Audio frozen — another player buzzed in
+                                </div>
+                            )}
+
                             <div style={{ width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                                 {showArtistInput && (
                                     <div style={{ position: 'relative' }}>
@@ -2420,7 +2722,7 @@ function GamePageInner() {
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter') {
                                                     e.preventDefault()
-                                                    if (showTitleInput) {
+                                                    if (showTitleInputFinal) {
                                                         titleInputRef.current?.focus()
                                                     } else {
                                                         submitGuess()
@@ -2428,7 +2730,7 @@ function GamePageInner() {
                                                 }
                                                 if (e.key === 'Escape') setArtistFocused(false)
                                             }}
-                                            disabled={hasSubmitted || !canGuess}
+                                            disabled={hasSubmitted || !canGuess || (isBuzzer && buzzerFrozen)}
                                         />
                                         {artistFocused && artistSuggestions.length > 0 && (
                                             <div className="autocomplete-dropdown">
@@ -2448,16 +2750,42 @@ function GamePageInner() {
                                         )}
                                     </div>
                                 )}
-                                {showTitleInput && (
+                                {showTitleInputFinal && (
                                     <input
                                         ref={titleInputRef}
-                                        type="text" placeholder={isAlbumArt ? "Guess the Album Name..." : "Guess the Song Title..."}
+                                        type="text"
+                                        placeholder={
+                                            isAlbumArt ? "Guess the Album Name..."
+                                                : isEmojiCharades ? "Guess the Song Title..."
+                                                    : "Guess the Song Title..."
+                                        }
                                         className="input-field"
                                         value={guess.title}
                                         maxLength={100}
                                         aria-label={isAlbumArt ? 'Album name guess' : 'Song title guess'}
                                         title="Press Enter to submit"
                                         onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value.slice(0, 100) }))}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault()
+                                                submitGuess()
+                                            }
+                                        }}
+                                        disabled={hasSubmitted || !canGuess || (isBuzzer && buzzerFrozen)}
+                                    />
+                                )}
+
+                                {/* Lyric completion answer input */}
+                                {isLyricCompletion && (
+                                    <input
+                                        type="text"
+                                        placeholder="Type the next line..."
+                                        className="input-field"
+                                        value={guess.title}
+                                        maxLength={140}
+                                        aria-label="Next line guess"
+                                        title="Press Enter to submit"
+                                        onChange={(e) => setGuess(prev => ({ ...prev, title: e.target.value.slice(0, 140), artist: '' }))}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
                                                 e.preventDefault()
@@ -2498,6 +2826,34 @@ function GamePageInner() {
                                         />
                                     </div>
                                 )}
+                                {isSnippetReveal && !hasSubmitted && (() => {
+                                    const eligibleIds = players
+                                        .filter(p => !p.is_spectator && !p.has_submitted)
+                                        .map(p => p.id)
+                                    const voteCount = eligibleIds.filter(id => !!snippetVotes[id]).length
+                                    const totalVoters = eligibleIds.length
+                                    const hasVoted = !!snippetVotes[profile.id]
+                                    const atMax = snippetCap >= 30
+                                    return (
+                                        <button
+                                            className="btn-glass"
+                                            onClick={castSkipVote}
+                                            disabled={hasVoted || atMax}
+                                            style={{
+                                                fontWeight: 700,
+                                                letterSpacing: '0.04em',
+                                                borderColor: hasVoted ? 'rgba(96,165,250,0.55)' : undefined,
+                                                color: hasVoted ? '#bfdbfe' : undefined,
+                                            }}
+                                        >
+                                            {atMax
+                                                ? 'Full clip unlocked'
+                                                : hasVoted
+                                                    ? `Waiting for others… ${voteCount}/${totalVoters}`
+                                                    : `Reveal next second · ${voteCount}/${totalVoters} ready`}
+                                        </button>
+                                    )
+                                })()}
                                 {!isGuessWho && !isWhoSangThat && !isChillRating && (
                                     <button
                                         className="btn-primary"
@@ -2606,7 +2962,10 @@ function GamePageInner() {
             <audio
                 ref={onAudioRefChange}
                 preload="auto"
-                loop={true}
+                // Snippet Reveal needs a single playthrough that stops at the
+                // current cap. Leaving `loop` on would wrap the 30s preview
+                // and also suppress `onEnded`.
+                loop={!isSnippetReveal}
                 style={{ display: 'none' }}
                 onError={(e) => {
                     console.error('[Audio Event] onError:', e.nativeEvent)
@@ -2620,6 +2979,10 @@ function GamePageInner() {
                 }}
                 onPause={() => {
                     console.log('[Audio Event] onPause')
+                    // Snippet Reveal deliberately pauses the clip each time
+                    // playback reaches the currently-unlocked second. Don't
+                    // auto-resume or we'd defeat the whole mechanic.
+                    if (isSnippetReveal) return
                     if (isAudioExpected() && audioRef.current?.paused) {
                         // Recover from unexpected pauses, especially early in round 1.
                         setAudioStatus('idle')
@@ -2632,6 +2995,9 @@ function GamePageInner() {
                 }}
                 onEnded={() => {
                     console.log('[Audio Event] onEnded')
+                    // Same reasoning as onPause — in snippet_reveal, the clip
+                    // ending (or us pausing it) must not trigger a restart.
+                    if (isSnippetReveal) return
                     if (isAudioExpected() && audioRef.current?.paused) {
                         setTimeout(() => {
                             audioRef.current?.play().catch(err => {
