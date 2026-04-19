@@ -30,6 +30,8 @@ type ResolvedTrack = {
         duration: number
         link: string
         album_title?: string
+        /** Deezer's "rank" popularity metric (0..~1M). Proxy for track popularity. */
+        rank?: number
     }
     score: number
     warnings: string[]
@@ -524,7 +526,10 @@ export async function resolveSingleTrack(track: { artist: string, title: string,
                 cover_url: coverUrl,
                 duration: bestMatch.duration,
                 link: bestMatch.link,
-                album_title: albumTitle
+                album_title: albumTitle,
+                // Deezer's internal popularity metric (0..~1M). Used by the
+                // higher-or-lower game mode as a proxy for "how popular".
+                rank: typeof bestMatch.rank === 'number' ? bestMatch.rank : 0
             },
             score: bestScore,
             warnings: bestReasons,

@@ -13,6 +13,11 @@ export type GameMode =
     | 'album_art'
     | 'chill_rating'
     | 'year_guesser'
+    | 'mixed'
+    | 'buzzer'
+    | 'lyric_completion'
+    | 'emoji_charades'
+    | 'snippet_reveal'
 
 export type RoomSettings = {
     rounds: number

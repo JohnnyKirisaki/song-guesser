@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useUser } from '@/context/UserContext'
 import { db } from '@/lib/firebase'
 import { ref, onValue, update, remove, onDisconnect, serverTimestamp, get } from 'firebase/database'
-import { Users, Play, Copy, Check, Settings as SettingsIcon, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image, Star, Calendar, Eye } from 'lucide-react'
+import { Users, Play, Copy, Check, Settings as SettingsIcon, Crown, LogOut, XCircle, Music, Zap, Mic2, FileText, Disc, CheckCircle, HelpCircle, ChevronDown, Mic, AlertTriangle, X, Image, Star, Calendar, Eye, Shuffle, Bell, Pencil, Smile, Hourglass } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { fetchSpotifyData, addSongsToRoom, fetchChartTracks, type ChartKey, type FailedTrack } from '@/lib/spotify'
 import { soundManager } from '@/lib/sounds'
@@ -488,7 +488,12 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
         { id: 'who_sang_that', icon: Mic, label: 'Who Sang That?', description: 'Identify the vocalist from the performance.' },
         { id: 'album_art', icon: Image, label: 'Album Art', description: 'Solve the round from the album cover reveal.' },
         { id: 'chill_rating', icon: Star, label: 'Chill Rating', description: 'Sit back and rate songs from 1 to 10. No winners, losers, or leaderboards.' },
-        { id: 'year_guesser', icon: Calendar, label: 'Year Guesser', description: 'Guess the release year. 3 pts exact, 2 pts ±1 year, 1 pt ±2 years.' }
+        { id: 'year_guesser', icon: Calendar, label: 'Year Guesser', description: 'Guess the release year. 3 pts exact, 2 pts ±1 year, 1 pt ±2 years.' },
+        { id: 'buzzer', icon: Bell, label: 'Buzzer', description: 'First to lock in freezes audio for everyone. Big points for early correct guesses.' },
+        { id: 'lyric_completion', icon: Pencil, label: 'Finish the Lyric', description: 'A lyric appears with the next line missing. Type the next line before time runs out.' },
+        { id: 'emoji_charades', icon: Smile, label: 'Emoji Charades', description: 'The song title is shown as emojis. Decode and guess the track.' },
+        { id: 'snippet_reveal', icon: Hourglass, label: 'Snippet Reveal', description: 'Starts with 1 second of audio. Everyone has to agree to reveal the next second. Guess early for big points.' },
+        { id: 'mixed', icon: Shuffle, label: 'Mixed Bag', description: 'Every round is a different mode — random roulette across all modes (no Chill Rating).' }
     ]
 
     const sortedPlayers = [...players].sort((a, b) => (a.joined_at || 0) - (b.joined_at || 0))
@@ -991,9 +996,9 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                     </div>
 
                     {/* GAME MODES */}
-                    <div className="glass-panel" style={{ padding: '16px', background: 'rgba(255,255,255,0.03)' }}>
+                    <div className="glass-panel" style={{ padding: '16px 16px 20px', background: 'rgba(255,255,255,0.03)', overflow: 'visible' }}>
                         <label style={{ display: 'block', marginBottom: '14px', fontWeight: 700 }}>Game Mode</label>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(105px, 1fr))', gap: '10px' }}>
                         {modes.map(mode => (
                             <button
                                 key={mode.id}
@@ -1003,10 +1008,11 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                 aria-label={`${mode.label}. ${mode.description}`}
                                 style={{
                                     padding: '12px 8px', borderRadius: '12px',
+                                    minHeight: '84px',
                                     background: settings.mode === mode.id ? 'rgba(46,242,160,0.18)' : 'rgba(255,255,255,0.04)',
                                     color: settings.mode === mode.id ? 'white' : 'var(--text-muted)',
                                     border: '1px solid', borderColor: settings.mode === mode.id ? 'rgba(46,242,160,0.75)' : 'rgba(255,255,255,0.1)',
-                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px',
                                     transition: 'all 0.2s',
                                     opacity: (!isHost && settings.mode !== mode.id) ? 0.5 : 1,
                                     transform: settings.mode === mode.id ? 'scale(1.02)' : 'scale(1)',
@@ -1026,7 +1032,14 @@ export default function Lobby({ roomCode, initialSettings, isHost, hostId }: { r
                                 }}
                             >
                                 <mode.icon size={20} />
-                                <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{mode.label}</span>
+                                <span style={{
+                                    fontSize: '0.78rem',
+                                    fontWeight: 600,
+                                    textAlign: 'center',
+                                    lineHeight: 1.2,
+                                    whiteSpace: 'normal',
+                                    wordBreak: 'break-word',
+                                }}>{mode.label}</span>
                             </button>
                         ))}
                         </div>

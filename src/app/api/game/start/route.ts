@@ -5,6 +5,8 @@ import { MaskedSongItem, prepareGamePayload, SongItem } from '@/lib/game-logic'
 import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
 import { getArtistMetadataBatch } from '@/lib/artist-metadata'
 import { asyncPool } from '@/lib/async-utils'
+import { pickLyricCompletionPair, generateEmojiPuzzle } from '@/lib/new-mode-extras'
+import { fetchLyrics } from '@/lib/lyrics'
 
 const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 15
 
@@ -60,19 +62,55 @@ export async function POST(request: Request) {
         const secrets: Record<string, SongItem> = {}
         const maskedPlaylist: MaskedSongItem[] = []
 
-        const isAlbumArt = settings.mode === 'album_art'
+        // Mixed mode: assign a random sub-mode to each song, filtered by what
+        // metadata is available. chill_rating is intentionally excluded — it's
+        // a rating-based mode with no "correct answer", so mixing it in would
+        // give players free points in a competitive game.
+        const MIXED_POOL: string[] = [
+            'normal', 'artist_only', 'song_only', 'lyrics_only',
+            'guess_who', 'who_sang_that', 'album_art', 'year_guesser',
+            'buzzer', 'lyric_completion', 'emoji_charades', 'snippet_reveal'
+        ]
+        const pickModeForSong = (song: SongItem, _index: number): string => {
+            const eligible = MIXED_POOL.filter(m => {
+                if (m === 'year_guesser' && typeof song.release_year !== 'number') return false
+                if (m === 'album_art' && !song.album_cover_url && !song.cover_url) return false
+                // lyrics_only / who_sang_that / lyric_completion may fail lyrics
+                // lookup; reveal route has a replacement path.
+                return true
+            })
+            const pool = eligible.length > 0 ? eligible : ['normal']
+            return pool[Math.floor(Math.random() * pool.length)]
+        }
+
+        const isMixed = settings.mode === 'mixed'
 
         playlist.forEach((song, index) => {
+            // Stamp per-round mode BEFORE secrets get written so the reveal
+            // route sees it on the secret payload too.
+            if (isMixed) {
+                song.round_mode = pickModeForSong(song, index)
+            }
             secrets[index] = song
+
+            const effectiveMode = song.round_mode || settings.mode
+            const isAlbumArtRound = effectiveMode === 'album_art'
+            // lyric_completion asks the player to finish the next line — the
+            // song itself isn't the puzzle, so leaking artist/title is fine
+            // (and actually necessary: players need to know what song they're
+            // completing). Everything else stays masked.
+            const isLyricCompletionRound = effectiveMode === 'lyric_completion'
 
             maskedPlaylist.push({
                 id: song.id,
                 picked_by_user_id: song.picked_by_user_id,
-                preview_url: isAlbumArt ? null : (song.preview_url || null),
-                artist_name: '???',
-                track_name: '???',
-                cover_url: isAlbumArt ? (song.album_cover_url || song.cover_url) : '',
-                spotify_uri: song.spotify_uri || ''
+                preview_url: isAlbumArtRound ? null : (song.preview_url || null),
+                artist_name: isLyricCompletionRound ? song.artist_name : '???',
+                track_name: isLyricCompletionRound ? song.track_name : '???',
+                cover_url: isAlbumArtRound ? (song.album_cover_url || song.cover_url) : '',
+                spotify_uri: song.spotify_uri || '',
+                // Public — clients need to know which sub-mode this round is
+                round_mode: song.round_mode || null
             })
         })
 
@@ -82,10 +120,56 @@ export async function POST(request: Request) {
 
         updates[`room_secrets/${roomCode}`] = secrets
 
+        // --- Emoji Charades: generate emoji-string per song, publish under extras
+        // so clients can show the prompt without seeing the answer. Emojis are
+        // deterministic from title so generation is cheap and skippable on retry.
+        const emojiTargets = settings.mode === 'emoji_charades'
+            ? playlist
+            : (isMixed ? playlist.filter(s => s.round_mode === 'emoji_charades') : [])
+        if (emojiTargets.length > 0) {
+            // Use Gemini for semantic title→emoji; falls back to the local
+            // dictionary when the API key is absent or the call fails.
+            // Run serially (pool=1) to stay under Gemini free-tier RPM limits —
+            // generateEmojiPuzzle already retries 429s with backoff, but
+            // bursting 5+ parallel requests routinely hits the quota.
+            await asyncPool(1, emojiTargets, async (song: SongItem) => {
+                const emojis = await generateEmojiPuzzle(song.track_name, song.artist_name)
+                updates[`rooms/${roomCode}/emoji_charades_extras/${song.id}`] = { emojis }
+            })
+        }
+
+        // --- Lyric Completion: fetch lyrics with per-song timeout, pick a
+        // challenge/answer pair, publish challenge publicly and answer in a
+        // server-only bucket so reveal can score it.
+        const lyricCompletionTargets = settings.mode === 'lyric_completion'
+            ? playlist
+            : (isMixed ? playlist.filter(s => s.round_mode === 'lyric_completion') : [])
+        if (lyricCompletionTargets.length > 0) {
+            await asyncPool(3, lyricCompletionTargets, async (song: SongItem) => {
+                try {
+                    const lyrics = await fetchLyrics(song.artist_name, song.track_name)
+                    if (!lyrics) return
+                    const pair = pickLyricCompletionPair(lyrics)
+                    if (!pair) return
+                    // challenge (the line shown) is public. answer stays in a
+                    // server-only path so malicious clients can't just read it.
+                    updates[`rooms/${roomCode}/lyric_completion_extras/${song.id}`] = { challenge: pair.challenge }
+                    updates[`lyric_completion_secrets/${roomCode}/${song.id}`] = { answer: pair.answer }
+                } catch (e) {
+                    console.warn(`[LyricCompletion] prefetch failed for ${song.artist_name} - ${song.track_name}:`, e)
+                }
+            })
+        }
+
         // 3. Lyrics Handling (Server Side Prefetch) - parallel with per-song
         // timeout so one slow upstream never hangs game start. Also caps total
         // wall-clock regardless of how many songs time out.
-        if (settings.mode === 'lyrics_only') {
+        // In mixed mode, only prefetch for songs whose randomly-assigned round
+        // is lyrics_only — we don't need every song's lyrics.
+        const lyricsTargets = settings.mode === 'lyrics_only'
+            ? playlist
+            : (isMixed ? playlist.filter(s => s.round_mode === 'lyrics_only') : [])
+        if (lyricsTargets.length > 0) {
             const lyricsUpdates: Record<string, string> = {}
             const PER_SONG_TIMEOUT_MS = 4000
             const OVERALL_TIMEOUT_MS = 15_000
@@ -113,7 +197,7 @@ export async function POST(request: Request) {
                     const results = await Promise.allSettled(
                         // asyncPool caps concurrency at 3; allSettled so one
                         // rejection doesn't poison the batch.
-                        [asyncPool(3, playlist, fetchOne)]
+                        [asyncPool(3, lyricsTargets, fetchOne)]
                     )
                     void results
                 })(),
@@ -129,7 +213,12 @@ export async function POST(request: Request) {
         }
 
         // 3b. Who Sang That - Parallel Generation
-        if (settings.mode === 'who_sang_that') {
+        // In mixed mode, only build extras for songs whose randomly-assigned
+        // round is who_sang_that.
+        const wstTargets = settings.mode === 'who_sang_that'
+            ? playlist
+            : (isMixed ? playlist.filter(s => s.round_mode === 'who_sang_that') : [])
+        if (wstTargets.length > 0) {
             // Fetch ALL songs in the room to have a wider distractor pool
             const roomSongsSnap = await get(ref(db, `rooms/${roomCode}/songs`))
             const roomSongs = Object.values(roomSongsSnap.val() || {}) as SongItem[]
@@ -167,7 +256,7 @@ export async function POST(request: Request) {
             // Speed is the priority here.
             const recentOptionNames: string[] = []
 
-            await asyncPool(3, playlist, async (song: SongItem) => {
+            await asyncPool(3, wstTargets, async (song: SongItem) => {
                 const cached = updates[`rooms/${roomCode}/lyrics_cache/${song.id}`] as string | undefined
                 const { extra, lyricsText } = await buildWhoSangThatExtra(song, artistPool, cached ?? null, recentOptionNames)
 

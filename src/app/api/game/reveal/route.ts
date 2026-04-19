@@ -71,12 +71,26 @@ export async function POST(request: Request) {
         const roundGuesses: any[] = []
 
         const totalTime = settings?.time || 15
-        const mode = settings?.mode || 'normal'
-        console.log(`[Reveal] Start. Room: ${roomCode}, Round: ${roundIndex}, Mode: ${mode}`)
+        const roomMode = settings?.mode || 'normal'
+        // In mixed mode, each song carries its own round_mode assigned at
+        // game start. Fall back to the room-wide setting when absent.
+        const mode = (typeof fullSong.round_mode === 'string' && fullSong.round_mode)
+            ? fullSong.round_mode
+            : roomMode
+        console.log(`[Reveal] Start. Room: ${roomCode}, Round: ${roundIndex}, Mode: ${mode} (room: ${roomMode})`)
         const revealStart = Date.now()
         const isSuddenDeath = !!gameState.is_sudden_death
         const usedSongIds = new Set((gameState.playlist || []).map((s: any) => s.id).filter(Boolean))
 
+        // Per-mode side-channels fetched once so the scoring loop stays sync.
+        let lyricCompletionAnswer: string | null = null
+        if (mode === 'lyric_completion') {
+            const lcSnap = await get(ref(db, `lyric_completion_secrets/${roomCode}/${fullSong.id}`))
+            if (lcSnap.exists()) {
+                const v = lcSnap.val()
+                lyricCompletionAnswer = typeof v?.answer === 'string' ? v.answer : null
+            }
+        }
         const normalizePreviewUrl = (url: string) => url.replace(/^http:\/\//i, 'https://').trim()
         const isValidPreview = (url?: string | null) => {
             if (typeof url !== 'string' || !url.trim().startsWith('http')) return false
@@ -97,7 +111,10 @@ export async function POST(request: Request) {
             artist_name: '???',
             track_name: '???',
             cover_url: '',
-            spotify_uri: '' // Masked
+            spotify_uri: '', // Masked
+            // Preserve per-round mode so clients still know which sub-mode
+            // the round is in (mixed-mode sudden-death).
+            round_mode: song.round_mode || null
         })
 
         const applySongAtIndex = (index: number, song: SongItem) => {
@@ -273,6 +290,53 @@ export async function POST(request: Request) {
                     correctTitle = false
                     correctArtist = false
                     points = 0
+                } else if (mode === 'buzzer') {
+                    // Buzzer: same correctness check as normal — player types
+                    // artist/title. Scoring branch handles time-weighted points.
+                    const scoreData = calculateScore(
+                        { artist: g.artist, title: g.title },
+                        { artist: fullSong.artist_name, title: fullSong.track_name },
+                        timeLeftForPlayer,
+                        totalTime,
+                        mode,
+                        isSuddenDeath
+                    )
+                    points = scoreData.points
+                    correctTitle = scoreData.correctTitle
+                    correctArtist = scoreData.correctArtist
+                } else if (mode === 'lyric_completion') {
+                    // Lyric Completion: g.title holds the typed next-line guess.
+                    // Server-only answer pulled above into lyricCompletionAnswer.
+                    if (!lyricCompletionAnswer) {
+                        points = 0
+                        correctTitle = false
+                    } else {
+                        const scoreData = calculateScore(
+                            { artist: '', title: g.title },
+                            { artist: '', title: lyricCompletionAnswer },
+                            timeLeftForPlayer,
+                            totalTime,
+                            mode,
+                            isSuddenDeath
+                        )
+                        points = scoreData.points
+                        correctTitle = scoreData.correctTitle
+                    }
+                    correctArtist = false
+                } else if (mode === 'emoji_charades') {
+                    // Emoji Charades: player types track title. Answer is the
+                    // song's track_name. Scoring via song_only-ish rubric.
+                    const scoreData = calculateScore(
+                        { artist: '', title: g.title },
+                        { artist: '', title: fullSong.track_name },
+                        timeLeftForPlayer,
+                        totalTime,
+                        mode,
+                        isSuddenDeath
+                    )
+                    points = scoreData.points
+                    correctTitle = scoreData.correctTitle
+                    correctArtist = false
                 } else if (mode === 'year_guesser') {
                     // Year Guesser: guess.title holds the year the player typed in.
                     // The answer comes from fullSong.release_year (captured at import
@@ -301,7 +365,7 @@ export async function POST(request: Request) {
                     }
                 } else {
                     const scoreData = calculateScore(
-                        { artist: g.artist, title: g.title },
+                        { artist: g.artist, title: g.title, snippet_used: typeof g.snippet_used === 'number' ? g.snippet_used : undefined },
                         { artist: fullSong.artist_name, title: fullSong.track_name },
                         timeLeftForPlayer,
                         totalTime,
@@ -349,7 +413,11 @@ export async function POST(request: Request) {
             title: fullSong.track_name,
             cover_url: fullSong.album_cover_url || fullSong.cover_url,
             album_name: fullSong.album_name || null,
-            release_year: typeof fullSong.release_year === 'number' ? fullSong.release_year : null
+            release_year: typeof fullSong.release_year === 'number' ? fullSong.release_year : null,
+            // For lyric_completion: the next-line answer, so the reveal screen
+            // can show players what they were supposed to type.
+            lyric_answer: lyricCompletionAnswer,
+            popularity: typeof fullSong.popularity === 'number' ? fullSong.popularity : null
         }
 
         // Backfill playlist item for history consistency
@@ -377,7 +445,17 @@ export async function POST(request: Request) {
         }
 
         // 5. Lyrics (JIT Caching)
-        if (settings?.mode === 'lyrics_only') {
+        // In mixed mode we can't know which next round needs lyrics up front,
+        // so we trigger the prefetch block any time the CURRENT or NEXT song's
+        // effective mode is lyrics_only. The lookups inside the block are
+        // still idempotent (cache checks first).
+        const lyricsNeeded = settings?.mode === 'lyrics_only'
+            || mode === 'lyrics_only'
+            || (settings?.mode === 'mixed' && (() => {
+                const nextMasked = gameState.playlist?.[roundIndex + 1]
+                return nextMasked?.round_mode === 'lyrics_only'
+            })())
+        if (lyricsNeeded) {
             try {
                 if (isSuddenDeath) {
                     // In sudden death, prefetch lyrics in chunks of 5 (not every round).
@@ -480,7 +558,13 @@ export async function POST(request: Request) {
             }
         }
 
-        if (settings?.mode === 'who_sang_that') {
+        const wstNeeded = settings?.mode === 'who_sang_that'
+            || mode === 'who_sang_that'
+            || (settings?.mode === 'mixed' && (() => {
+                const nextMasked = gameState.playlist?.[roundIndex + 1]
+                return nextMasked?.round_mode === 'who_sang_that'
+            })())
+        if (wstNeeded) {
             try {
                 const artistPool = Array.from(new Map(
                     allSongs

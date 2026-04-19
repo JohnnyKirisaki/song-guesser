@@ -1,4 +1,4 @@
-export type ScoringMode = 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'album_art' | 'guess_who' | 'who_sang_that' | 'chill_rating' | 'year_guesser'
+export type ScoringMode = 'normal' | 'rapid' | 'artist_only' | 'song_only' | 'lyrics_only' | 'album_art' | 'guess_who' | 'who_sang_that' | 'chill_rating' | 'year_guesser' | 'mixed' | 'buzzer' | 'lyric_completion' | 'emoji_charades' | 'snippet_reveal'
 
 /**
  * Year-guesser scoring table. Graduated by absolute distance in years:
@@ -394,7 +394,7 @@ export function isMatch(guess: string, answer: string, isArtist: boolean = false
 }
 
 export function calculateScore(
-    guess: { artist: string, title: string },
+    guess: { artist: string, title: string, snippet_used?: number },
     answer: { artist: string, title: string },
     timeLeft: number,
     totalTime: number,
@@ -458,6 +458,35 @@ export function calculateScore(
         // Surface "exact hit" in correctTitle so the reveal UI can render a
         // green glow consistently with other modes.
         return { points, correctTitle: diff === 0, correctArtist: false }
+    } else if (mode === 'buzzer') {
+        // Buzzer: high-risk single-shot. Points scale steeply with time left
+        // (early correct = big; late correct = small). Wrong = 0. Artist
+        // optionally adds a smaller bonus.
+        const aggressiveMult = 1 + 2 * (timeLeft / Math.max(totalTime, 1))
+        if (correctTitle) points += TITLE_POINTS * aggressiveMult
+        if (correctArtist) points += ARTIST_POINTS * aggressiveMult
+    } else if (mode === 'lyric_completion') {
+        // Lyric Completion: the challenge lyric line comes via answer.title,
+        // the player's typed next-line via guess.title. Fuzzy-match for
+        // typos/punctuation.
+        const ok = isMatch(guess?.title || '', answer?.title || '', false)
+        if (ok) points += 3 * (1 + 0.5 * (timeLeft / Math.max(totalTime, 1)))
+        return { points: Math.round(points), correctTitle: ok, correctArtist: false }
+    } else if (mode === 'emoji_charades') {
+        // Emoji Charades: emojis in prompt, guess is the track title. Same
+        // scoring shape as song_only.
+        if (correctTitle) points += 3 * (1 + 0.5 * (timeLeft / Math.max(totalTime, 1)))
+    } else if (mode === 'snippet_reveal') {
+        // Snippet Reveal: rounds run on consensus votes, not a clock, so the
+        // multiplier is driven by HOW MUCH of the clip was unlocked when the
+        // player submitted — 1s = full points, decays ~10% per extra second,
+        // floor at 0.2x so a full-reveal correct guess still pays something.
+        const sc = typeof guess.snippet_used === 'number' && guess.snippet_used >= 1
+            ? guess.snippet_used
+            : 30
+        const mult = Math.max(0.2, 1 - (sc - 1) * 0.1)
+        if (correctTitle) points += TITLE_POINTS * mult
+        if (correctArtist) points += ARTIST_POINTS * mult
     } else {
         // Normal
         if (correctTitle) points += TITLE_POINTS * timeMultiplier

@@ -15,6 +15,8 @@ export type SpotifyTrack = {
     album_cover_url?: string | null
     /** Release year (e.g. 2004). Null when upstream metadata is missing it. */
     release_year?: number | null
+    /** Deezer popularity rank; higher = more streams. Used by higher-or-lower. */
+    popularity?: number | null
 }
 
 export type FailedTrack = { artist: string, title: string }
@@ -60,7 +62,8 @@ async function resolveViaServer(metadata: any[], clearLog: boolean = false): Pro
                     if (!raw) return null
                     const parsed = parseInt(String(raw).slice(0, 4), 10)
                     return Number.isFinite(parsed) && parsed > 1900 && parsed <= new Date().getFullYear() + 1 ? parsed : null
-                })()
+                })(),
+                popularity: typeof t.deezer?.rank === 'number' && t.deezer.rank > 0 ? t.deezer.rank : null
             }))
 
         const failed = data.tracks
@@ -266,7 +269,8 @@ export async function addSongsToRoom(roomCode: string, userId: string, tracks: S
             cover_url: t.cover_url || null,
             preview_url: t.preview_url,
             picked_by_user_id: userId,
-            release_year: t.release_year ?? null
+            release_year: t.release_year ?? null,
+            popularity: t.popularity ?? null
         }
     })
 

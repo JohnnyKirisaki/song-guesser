@@ -21,7 +21,13 @@
       "Bash(grep -rn \"onValue.*ref\\\\|ref.*where\" /c/Users/Johnny/Documents/BeatBattle/.claude/worktrees/inspiring-mayer/src/app/game/[code]/page.tsx)",
       "Bash(grep -n \"submitGuess\\\\|const submitGuess\" /c/Users/Johnny/Documents/BeatBattle/.claude/worktrees/inspiring-mayer/src/app/game/[code]/page.tsx)",
       "Bash(npx vitest:*)",
-      "Bash(ls -la .env*)"
+      "Bash(ls -la .env*)",
+      "Bash(gh pr:*)",
+      "Bash(\"C:/Program Files/GitHub CLI/gh.exe\" --version)",
+      "Bash(where gh *)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" --version)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Users/Johnny/AppData/Local/**)"
     ]
   }
 }
