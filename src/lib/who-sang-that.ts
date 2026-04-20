@@ -1,6 +1,6 @@
 import { fetchArtistPhoto, fetchSpotifyArtistPhoto } from './artist-photos'
 import { fetchLyrics } from './lyrics'
-import { detectLanguage, LanguageCode } from './language-detector'
+import { detectLanguage, languageFromGenres, baseLang, LanguageCode } from './language-detector'
 
 const FILLER_RE = /^(oh+|ah+|na+|la+|hey+|yeah+|uh+|mm+|hm+|woo+|ay+|yea+|ooh+|bah+|da+|doo+|sha+|bay+|whoa+|hmm+|mmm+|ohh+|yeh+|nah+|aye+|woah+|ooo+)[\s,!?.~\-*]*$/i
 
@@ -71,22 +71,45 @@ function chooseImposterArtist(
     const avoidSet = new Set(avoidArtistNames.map(name => name.toLowerCase().trim()).filter(Boolean))
 
     // 1. Filter out the correct artist
-    const candidates = artistPool.filter(a => a.name.toLowerCase().trim() !== normalizedCorrectArtist)
-    if (candidates.length === 0) return { name: 'Various Artists', spotify_artist_id: null }
+    const allCandidates = artistPool.filter(a => a.name.toLowerCase().trim() !== normalizedCorrectArtist)
+    if (allCandidates.length === 0) return { name: 'Various Artists', spotify_artist_id: null }
 
-    // 2. Score each candidate based on Language and Genre overlap
+    // 2. Language hard-filter with three tiers. Pairing a pt-pt track
+    //    with an English-only artist used to make the round trivial; pt-pt
+    //    with pt-br is better, but we still prefer same-region when
+    //    possible (Chico da Tina + Fado act beats Chico da Tina + Anitta).
+    //      tier 1: exact language code match (pt-pt ↔ pt-pt)
+    //      tier 2: same base language family (pt-pt ↔ pt-br / bare 'pt')
+    //      tier 3: full pool — last resort so we don't hand back
+    //              "Various Artists" just because the room happens to
+    //              have only one artist in that language family.
+    const exactLang = allCandidates.filter(a => a._lang === lang)
+    const base = baseLang(lang)
+    const sameFamily = base
+        ? allCandidates.filter(a => a._lang != null && baseLang(a._lang) === base)
+        : []
+    const candidates =
+        exactLang.length > 0 ? exactLang
+            : sameFamily.length > 0 ? sameFamily
+                : allCandidates
+    const pickedFromExactOrFamily = candidates !== allCandidates
+
+    // 3. Score each remaining candidate by genre overlap / recency.
     const scoredCandidates = candidates.map(cand => {
         let score = 0
-        
-        // Language weight (Most important)
-        if (cand._lang === lang) {
-            score += 100
-        } else if (cand._lang && cand._lang !== lang) {
-            // Strong penalty for known language mismatch
-            score -= 200
+
+        // Inside the exact-match or family pool, language doesn't add
+        // score (everyone qualifies on lang alone). If we fell back to
+        // the full pool, give a small reward for same base language
+        // (shouldn't normally happen — tier 2 catches that — but the
+        // guard stops us from randomly picking an untagged `_lang`
+        // artist over a legitimate near-match).
+        if (!pickedFromExactOrFamily) {
+            if (cand._lang === lang) score += 100
+            else if (cand._lang && cand._lang !== lang) score -= 200
         }
-        
-        // Genre overlap weight
+
+        // Genre overlap weight — now the primary tiebreaker within lang.
         if (correctArtistGenres.length > 0 && cand._genres && cand._genres.length > 0) {
             const overlap = cand._genres.filter(g => correctArtistGenres.includes(g))
             score += overlap.length * 20
@@ -125,12 +148,24 @@ export async function buildWhoSangThatExtra(
             })()
             : []
         
-        // DETECT LANGUAGE & GENRE MATCHING
-        const lang = detectLanguage(excerpt.join(' '))
-        
-        // Find correct artist's genres from pool
+        // Find correct artist's pool data (genres + cached language tag).
         const correctArtistPoolData = artistPool.find(a => a.name.toLowerCase().trim() === song.artist_name.toLowerCase().trim())
         const genres = correctArtistPoolData?._genres || []
+
+        // LANGUAGE DETECTION — order by signal strength:
+        //   1. Genre string (unambiguous: 'sertanejo' → pt, 'k-pop' → ko)
+        //   2. Full lyrics text (much richer than the 2-line excerpt)
+        //   3. Excerpt text (small sample, weakest)
+        //   4. The artist's own pool _lang tag (may itself be genre-inferred)
+        // A 2-line excerpt in English ("I love you / forever and ever")
+        // inside an otherwise-Portuguese song used to fall through to 'en'
+        // and silently pair the round with an English-only imposter.
+        const lang: LanguageCode =
+            languageFromGenres(genres) ??
+            (text ? detectLanguage(text) : null) ??
+            (excerpt.length > 0 ? detectLanguage(excerpt.join(' ')) : null) ??
+            correctArtistPoolData?._lang ??
+            'en'
 
         const imposter = chooseImposterArtist(song.artist_name, artistPool, lang, avoidArtistNames, genres)
 
