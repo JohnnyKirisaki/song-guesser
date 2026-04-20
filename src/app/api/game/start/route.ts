@@ -5,7 +5,7 @@ import { MaskedSongItem, prepareGamePayload, SongItem } from '@/lib/game-logic'
 import { buildWhoSangThatExtra } from '@/lib/who-sang-that'
 import { getArtistMetadataBatch } from '@/lib/artist-metadata'
 import { asyncPool } from '@/lib/async-utils'
-import { pickLyricCompletionPair, generateEmojiPuzzle } from '@/lib/new-mode-extras'
+import { pickLyricCompletionPair } from '@/lib/new-mode-extras'
 import { fetchLyrics } from '@/lib/lyrics'
 
 const WHO_SANG_THAT_RECENT_OPTION_LIMIT = 15
@@ -120,23 +120,12 @@ export async function POST(request: Request) {
 
         updates[`room_secrets/${roomCode}`] = secrets
 
-        // --- Emoji Charades: generate emoji-string per song, publish under extras
-        // so clients can show the prompt without seeing the answer. Emojis are
-        // deterministic from title so generation is cheap and skippable on retry.
-        const emojiTargets = settings.mode === 'emoji_charades'
-            ? playlist
-            : (isMixed ? playlist.filter(s => s.round_mode === 'emoji_charades') : [])
-        if (emojiTargets.length > 0) {
-            // Use Gemini for semantic title→emoji; falls back to the local
-            // dictionary when the API key is absent or the call fails.
-            // Run serially (pool=1) to stay under Gemini free-tier RPM limits —
-            // generateEmojiPuzzle already retries 429s with backoff, but
-            // bursting 5+ parallel requests routinely hits the quota.
-            await asyncPool(1, emojiTargets, async (song: SongItem) => {
-                const emojis = await generateEmojiPuzzle(song.track_name, song.artist_name)
-                updates[`rooms/${roomCode}/emoji_charades_extras/${song.id}`] = { emojis }
-            })
-        }
+        // --- Emoji Charades: emoji puzzles are now generated lazily per-round
+        // by `/api/game/emoji/ensure` the moment a song's round begins. Doing
+        // it here used to block /start on Gemini rate limits, sometimes
+        // breaching the serverless timeout on long playlists. The host fires
+        // the ensure call as each emoji round comes up; the local dictionary
+        // fallback guarantees the client always sees *something*.
 
         // --- Lyric Completion: fetch lyrics with per-song timeout, pick a
         // challenge/answer pair, publish challenge publicly and answer in a

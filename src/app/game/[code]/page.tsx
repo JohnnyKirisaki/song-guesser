@@ -268,6 +268,7 @@ function GamePageInner() {
     const prevRanksRef = useRef<Record<string, number>>({})
     const currentSongRef = useRef<SongItem | undefined>(undefined)
     const whoSangThatHydrationRef = useRef<Record<string, boolean>>({})
+    const emojiHydrationRef = useRef<Record<string, boolean>>({})
 
     // Load room songs once for autocomplete
     useEffect(() => {
@@ -992,6 +993,64 @@ function GamePageInner() {
             delete whoSangThatHydrationRef.current[songId]
         }
     }, [isHost, mode, currentSong?.id, gameState?.current_round_index, whoSangThatData?.options?.length, code])
+
+    // Emoji Charades extras are generated lazily per-round (no longer at
+    // /start, which kept blowing the serverless timeout on long playlists).
+    // Host-only: scan a prefetch window from the current round forward and
+    // POST the indices that still need a puzzle. Firing during the current
+    // round's reveal (or as soon as the game starts) means by the time the
+    // player is moved into the guess screen the emojis are already in
+    // Firebase — no visible loading state. The endpoint is idempotent +
+    // falls back to the local dictionary on Gemini failure.
+    useEffect(() => {
+        if (!isHost || !gameState?.playlist) return
+        const currentIdx = gameState.current_round_index ?? 0
+        const roomMode = roomSettings?.mode
+
+        // Look ahead 2 rounds (plus the current one) so we stay ahead of
+        // playback even when three emoji rounds land in a row.
+        const PREFETCH_WINDOW = 2
+        const start = currentIdx
+        const end = Math.min(gameState.playlist.length, currentIdx + 1 + PREFETCH_WINDOW)
+
+        const targetIndices: number[] = []
+        const claimedIds: string[] = []
+        for (let i = start; i < end; i++) {
+            const song = gameState.playlist[i] as (SongItem & { round_mode?: string | null }) | undefined
+            if (!song?.id) continue
+            const effectiveMode = (typeof song.round_mode === 'string' && song.round_mode) ? song.round_mode : roomMode
+            if (effectiveMode !== 'emoji_charades') continue
+            if (emojiHydrationRef.current[song.id]) continue
+            targetIndices.push(i)
+            claimedIds.push(song.id)
+            emojiHydrationRef.current[song.id] = true
+        }
+
+        if (targetIndices.length === 0) return
+
+        const controller = new AbortController()
+
+        void fetch('/api/game/emoji-extras', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomCode: code, roundIndices: targetIndices }),
+            signal: controller.signal
+        }).then(async (res) => {
+            if (res.ok) return
+            const data = await res.json().catch(() => ({}))
+            claimedIds.forEach(id => { delete emojiHydrationRef.current[id] })
+            console.warn(`[EmojiCharades] Extras hydrate failed (${res.status}): ${data?.error || 'unknown'}`)
+        }).catch((e) => {
+            if (e?.name === 'AbortError') return
+            claimedIds.forEach(id => { delete emojiHydrationRef.current[id] })
+            console.warn('[EmojiCharades] Extras hydrate request failed', e)
+        })
+
+        return () => {
+            controller.abort()
+            claimedIds.forEach(id => { delete emojiHydrationRef.current[id] })
+        }
+    }, [isHost, gameState?.current_round_index, gameState?.playlist, roomSettings?.mode, code])
 
     // --------------------------------------------------------------------------------
     // 3. COLOR EXTRACTION (Dynamic Backgrounds)
