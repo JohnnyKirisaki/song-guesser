@@ -1,9 +1,66 @@
 
-export type LanguageCode = 'en' | 'pt' | 'es' | 'ko' | 'ja' | 'ru' | 'other'
+// Compound codes like "pt-br" / "pt-pt" let us distinguish regional
+// variants that sound/feel noticeably different even when they share a
+// base language. The text-based detector can't reliably tell a Brazilian
+// song from a European Portuguese one from lyrics alone, but Spotify
+// genre strings are very distinct (sertanejo ≠ fado), so we reserve the
+// regional tags for genre-sourced detections and leave text-sourced
+// results at the bare language code.
+export type LanguageCode = 'en' | 'pt' | 'pt-br' | 'pt-pt' | 'es' | 'ko' | 'ja' | 'ru' | 'other'
 
-const PT_KEYWORDS = new Set(['que', 'do', 'da', 'os', 'as', 'de', 'em', 'um', 'para', 'com', 'não', 'mais', 'como', 'mas', 'foi', 'uma'])
-const ES_KEYWORDS = new Set(['y', 'el', 'la', 'los', 'las', 'en', 'de', 'que', 'no', 'es', 'se', 'un', 'una', 'con', 'por', 'lo', 'su'])
+/**
+ * Returns the base language ("family") for a language code — pt-br → pt,
+ * pt-pt → pt, en → en. Used by the Who Sang That imposter picker to
+ * prefer same-region artists first, then fall back to same-family
+ * artists, before ever widening to a different language entirely.
+ */
+export function baseLang(code: LanguageCode | null | undefined): string | null {
+    if (!code) return null
+    return code.split('-')[0]
+}
+
+const PT_KEYWORDS = new Set(['que', 'do', 'da', 'os', 'as', 'de', 'em', 'um', 'para', 'com', 'não', 'mais', 'como', 'mas', 'foi', 'uma', 'você', 'eu', 'me', 'te', 'meu', 'minha', 'seu', 'sua', 'nós', 'tudo', 'só', 'quando', 'ser', 'estar', 'tem', 'ter', 'pra', 'né', 'cê', 'vai', 'vou', 'amor', 'coração'])
+const ES_KEYWORDS = new Set(['y', 'el', 'la', 'los', 'las', 'en', 'de', 'que', 'no', 'es', 'se', 'un', 'una', 'con', 'por', 'lo', 'su', 'yo', 'tú', 'mi', 'te', 'me', 'más', 'pero', 'todo', 'sólo', 'cuando', 'ser', 'está', 'tiene', 'corazón'])
 const EN_KEYWORDS = new Set(['the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at'])
+
+// Spotify genre strings are surprisingly reliable for language identification.
+// When the title-only detector is weak (short titles, no diacritics), genre
+// strings are the strongest signal we've got — a "sertanejo" artist isn't
+// ever going to be singing in English.
+const GENRE_LANG_MARKERS: Array<[RegExp, LanguageCode]> = [
+    // Brazilian Portuguese markers. These are the uniquely-Brazilian
+    // genres — mpb, sertanejo, samba, bossa, forró, pagode, funk carioca,
+    // trap brasileiro — plus any genre explicitly tagged "brazilian".
+    [/\b(mpb|sertanejo|samba|bossa ?nova|forr[oó]|pagode|funk carioca|funk bh|funk paulista|trap brasileiro|rap brasileiro|brazilian)\b/i, 'pt-br'],
+    // European Portuguese markers. Fado + "portuguese" prefix genres
+    // (portuguese pop, portuguese rock, portuguese hip hop). Kizomba is
+    // Angolan but culturally/linguistically closer to pt-pt than pt-br
+    // and Angolan artists are often lumped into the same imposter pool.
+    [/\b(fado|portuguese|kizomba|lusophone|pimba)\b/i, 'pt-pt'],
+    // Spanish / Latin: reggaeton, bachata, salsa, cumbia, mariachi, flamenco,
+    // ranchera, corridos, banda, vallenato, 'latin *', 'spanish *'
+    [/\b(reggaeton|bachata|salsa|cumbia|mariachi|flamenco|ranchera|corridos?|banda|vallenato|latin|spanish|tejano|norte[nñ]o|regional mexican)\b/i, 'es'],
+    // Korean: k-pop, k-rap, k-indie, k-rock, korean *
+    [/\b(k-?pop|k-?rap|k-?indie|k-?rock|k-?ballad|korean)\b/i, 'ko'],
+    // Japanese: j-pop, j-rock, anime, city pop, vocaloid
+    [/\b(j-?pop|j-?rock|j-?idol|japanese|anime|city pop|vocaloid|enka)\b/i, 'ja'],
+    // Russian: 'russian *', 'russian rap', 'russian rock'
+    [/\b(russian|russkiy|russ\.? ?pop)\b/i, 'ru'],
+]
+
+/**
+ * Infer language from a list of Spotify genre strings. Returns null when no
+ * genre strings match a known marker — callers should fall back to
+ * text-based detection.
+ */
+export function languageFromGenres(genres: string[] | null | undefined): LanguageCode | null {
+    if (!genres || genres.length === 0) return null
+    const joined = genres.join(' ')
+    for (const [pattern, lang] of GENRE_LANG_MARKERS) {
+        if (pattern.test(joined)) return lang
+    }
+    return null
+}
 
 // Unique characters to boost confidence
 const PT_CHARS = /[ãõçáàéíóú]/i
